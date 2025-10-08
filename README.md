@@ -172,12 +172,20 @@ pyreadstat>=1.2.0
 
 ## 📚 Citation
 
-If you use this pipeline in your research, please cite:
+If you use this pipeline or data in your research, please cite:
 
 ```
-Early Weaning Analysis Pipeline
-URL: https://github.com/sarabehnamian/early-weaning-analysis
+Behnamian, S., & Fogh, F. (2025). Wealth, Education, and Urbanization as Predictors 
+of Early Weaning: A Multi-Country Survival Analysis. Globe Institute, University of 
+Copenhagen, Denmark; Department of Mathematical Sciences, Florida Atlantic University, 
+Boca Raton, FL, USA.
+
+GitHub repository: https://github.com/sarabehnamian/early-weaning-analysis
 ```
+
+**Authors:**
+- Sara Behnamian - Globe Institute, University of Copenhagen, Øster Voldgade 5–7, 1350 Copenhagen K, Denmark
+- Fatemeh Fogh - Department of Mathematical Sciences, Florida Atlantic University, Boca Raton, FL 33431, USA
 
 And cite the DHS Program:
 ```
@@ -191,7 +199,15 @@ Contributions are welcome! Please feel free to submit issues or pull requests.
 
 ## 📧 Contact
 
-For questions or collaboration inquiries, please open an issue on this repository.
+**Sara Behnamian**  
+Email: sara.behnamian@sund.ku.dk  
+Affiliation: Globe Institute, University of Copenhagen
+
+**Fatemeh Fogh**  
+Email: ffogh2021@fau.edu  
+Affiliation: Department of Mathematical Sciences, Florida Atlantic University
+
+For questions, collaboration inquiries, or to report issues, please contact us via email or open an issue on this repository.
 
 ## 📄 License
 
