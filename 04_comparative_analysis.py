@@ -30,10 +30,22 @@ from lifelines import KaplanMeierFitter
 import matplotlib.pyplot as plt
 plt.style.use('default')  # Use default style
 
+# Publication figure settings (R1.5): larger fonts, 300 dpi kept in every savefig
+plt.rcParams.update({
+    'font.size': 12,
+    'axes.labelsize': 13,
+    'axes.titlesize': 14,
+    'xtick.labelsize': 11,
+    'ytick.labelsize': 11,
+    'legend.fontsize': 11,
+    'figure.titlesize': 15,
+})
+
 # -------------------- Configuration --------------------
 
 REGIONS = {
-    'West Africa': ['BF', 'BJ', 'CI', 'GH', 'GM', 'GN', 'LB', 'ML', 'NE', 'NG', 'SL', 'SN', 'TG', 'MR'],
+    # Identical to 03_survival_analysis.py so that regional Ns agree across all figures (R3.9)
+    'West Africa': ['BF', 'BJ', 'CI', 'GH', 'GM', 'GN', 'LB', 'ML', 'NI', 'NG', 'SL', 'SN', 'TG', 'MR'],
     'East Africa': ['BI', 'BU', 'ER', 'ET', 'KE', 'KM', 'MW', 'RW', 'TZ', 'UG', 'ZM', 'ZW', 'MZ', 'LS', 'MG'],
     'Central Africa': ['AO', 'CD', 'CG', 'CM', 'GA', 'ST', 'TD', 'CF'],
     'North Africa': ['EG', 'MA', 'TN'],
@@ -42,8 +54,8 @@ REGIONS = {
                    'AP', 'AS', 'BH', 'DL', 'GJ', 'GO', 'HP', 'HR', 'KA',
                    'MB', 'MH', 'MN', 'MP', 'OR', 'PJ', 'RJ', 'SK', 'UP', 'WB'],
     'Southeast Asia': ['ID', 'KH', 'LA', 'MM', 'PH', 'TH', 'TL', 'VN', 'PG'],
-    'Latin America & Caribbean': ['BO', 'BR', 'CO', 'DR', 'EC', 'GT', 'HN', 'HT',
-                                  'MX', 'NI', 'PE', 'PY', 'AR', 'GY', 'JM'],
+    'Latin America & Caribbean': ['BO', 'BR', 'CO', 'DR', 'EC', 'GT', 'GU', 'HN', 'HT',
+                                  'MX', 'NC', 'PE', 'PY', 'AR', 'GY', 'JM'],
     'Europe/Central Asia': ['AL', 'AM', 'AZ', 'KK', 'KY', 'MD', 'TJ', 'TR', 'UA', 'UZ'],
     'Middle East': ['JO', 'YE'],
 }
@@ -60,17 +72,23 @@ COUNTRY_NAMES = {
     'BJ': 'Benin', 'CI': "Côte d'Ivoire", 'GM': 'Gambia', 'GN': 'Guinea', 'LB': 'Liberia',
     'NE': 'Niger', 'SL': 'Sierra Leone', 'TG': 'Togo', 'MR': 'Mauritania',
     'BI': 'Burundi', 'BU': 'Burundi', 'ER': 'Eritrea', 'KM': 'Comoros', 'MG': 'Madagascar',
-    'AO': 'Angola', 'CD': 'Congo DRC', 'CG': 'Congo', 'CM': 'Cameroon', 'GA': 'Gabon',
+    'AO': 'Angola', 'CD': 'DR Congo', 'CG': 'Congo', 'CM': 'Cameroon', 'GA': 'Gabon',
     'ST': 'São Tomé', 'TD': 'Chad', 'CF': 'Central African Rep',
     'ZA': 'South Africa', 'SZ': 'Eswatini', 'NM': 'Namibia',
     'LK': 'Sri Lanka', 'MV': 'Maldives', 'IA': 'India', 
     'LA': 'Laos', 'TH': 'Thailand', 'TL': 'Timor-Leste', 'PG': 'Papua New Guinea',
     'BR': 'Brazil', 'CO': 'Colombia', 'DR': 'Dominican Rep', 'EC': 'Ecuador',
-    'MX': 'Mexico', 'NI': 'Nicaragua', 'PY': 'Paraguay',
+    'MX': 'Mexico', 'NC': 'Nicaragua', 'NI': 'Niger', 'GU': 'Guatemala', 'PY': 'Paraguay',
     'AR': 'Argentina', 'GY': 'Guyana', 'JM': 'Jamaica',
     'AL': 'Albania', 'KK': 'Kazakhstan', 'KY': 'Kyrgyzstan', 'MD': 'Moldova',
     'TJ': 'Tajikistan', 'TR': 'Turkey', 'UA': 'Ukraine', 'UZ': 'Uzbekistan',
-    'YE': 'Yemen', 'TN': 'Tunisia'
+    'YE': 'Yemen', 'TN': 'Tunisia',
+    # Indian state-level DHS files (NFHS)
+    'AP': 'Andhra Pradesh, India', 'AS': 'Assam, India', 'BH': 'Bihar, India', 'DL': 'Delhi, India',
+    'GJ': 'Gujarat, India', 'GO': 'Goa, India', 'HP': 'Himachal Pradesh, India', 'HR': 'Haryana, India',
+    'KA': 'Karnataka, India', 'MB': 'Meghalaya, India', 'MH': 'Maharashtra, India', 'MN': 'Manipur, India',
+    'MP': 'Madhya Pradesh, India', 'OR': 'Odisha, India', 'PJ': 'Punjab, India', 'RJ': 'Rajasthan, India',
+    'SK': 'Sikkim, India', 'UP': 'Uttar Pradesh, India', 'WB': 'West Bengal, India'
 }
 
 # -------------------- Helper Functions --------------------
@@ -99,32 +117,64 @@ def get_country_name(code: str) -> str:
     """Get full country name from code."""
     return COUNTRY_NAMES.get(code, code)
 
-def calculate_median_duration(data: pd.DataFrame) -> float:
-    """Calculate median breastfeeding duration using Kaplan-Meier."""
+def _fit_survival(data: pd.DataFrame):
+    """Weighted survival fit.
+
+    Children coded m4 = 93 stopped breastfeeding at an unknown time before the
+    interview (left-censored); an ordinary Kaplan-Meier estimator cannot use them,
+    so where they are present the Turnbull NPMLE is fitted from the interval
+    bounds [t_lower, t_upper]. Returns a fitted KaplanMeierFitter, or None.
+    """
     if len(data) < 10:
-        return np.nan
-    
+        return None
+    d = data
+    w = None
+    if 'weight' in d.columns:
+        valid = d['weight'].notna() & (d['weight'] > 0)
+        d = d.loc[valid]
+        if len(d) < 10:
+            return None
+        w = d['weight'].to_numpy(dtype=float)
+    kmf = KaplanMeierFitter()
+    n_left = int((d['censor_type'] == 'left').sum()) if 'censor_type' in d.columns else 0
     try:
-        kmf = KaplanMeierFitter()
-        # Use weights if available
-        if 'weight' in data.columns:
-            weights = data['weight']
-            valid = weights.notna() & (weights > 0)
-            if valid.sum() < 10:
-                return np.nan
-            kmf.fit(data.loc[valid, 'duration_months'], 
-                   data.loc[valid, 'event'],
-                   weights=data.loc[valid, 'weight'])
+        if n_left > 0 and {'t_lower', 't_upper'}.issubset(d.columns):
+            lo = pd.to_numeric(d['t_lower'], errors='coerce').to_numpy(dtype=float)
+            up = pd.to_numeric(d['t_upper'], errors='coerce').to_numpy(dtype=float)
+            up = np.where(np.isnan(up), np.inf, up)
+            kmf.fit_interval_censoring(lo, up, weights=w)
         else:
-            kmf.fit(data['duration_months'], data['event'])
-        
-        median = kmf.median_survival_time_
-        # Cap infinite values at 36 months for better visualization
-        if np.isinf(median):
-            median = 36.0
-        return median
-    except:
+            if d['event'].sum() == 0:
+                return None
+            kmf.fit(d['duration_months'], d['event'], weights=w)
+    except Exception:
+        return None
+    return kmf
+
+
+def survival_at(data: pd.DataFrame, t: float) -> float:
+    """Weighted probability of still breastfeeding at t months (np.nan if not estimable)."""
+    kmf = _fit_survival(data)
+    if kmf is None:
         return np.nan
+    sf = kmf.survival_function_
+    idx = sf.index.get_indexer([t], method='ffill')[0]
+    return float(sf.iloc[idx, 0]) if idx >= 0 else 1.0
+
+
+def calculate_median_duration(data: pd.DataFrame) -> float:
+    """Median duration of any breastfeeding (Turnbull where left-censored, else Kaplan-Meier)."""
+    kmf = _fit_survival(data)
+    if kmf is None:
+        return np.nan
+    median = kmf.median_survival_time_
+    if isinstance(median, (pd.DataFrame, pd.Series)):   # interval-censored: bounds
+        median = float(np.asarray(median, dtype=float).ravel().mean())
+    median = float(median)
+    # Cap infinite values at 36 months for better visualization
+    if np.isinf(median):
+        median = 36.0
+    return median
 
 # -------------------- Analysis Functions --------------------
 
@@ -156,18 +206,33 @@ def create_country_rankings(data: pd.DataFrame, output_dir: Path, logger):
                 total_weight = wd['weight'].sum()
                 
                 # FIXED: Calculate weighted percentages directly on weighted_data
-                w_never = wd.loc[(wd['duration_months'] == 0) & (wd['event'] == 1), 'weight'].sum()
+                # never breastfed is m4 = 94 where the flag is available; duration 0 also
+                # counts children who breastfed for less than a month
+                if 'never_breastfed' in wd.columns:
+                    w_never = wd.loc[wd['never_breastfed'] == 1, 'weight'].sum()
+                else:
+                    w_never = wd.loc[(wd['duration_months'] == 0) & (wd['event'] == 1), 'weight'].sum()
                 w_early = wd.loc[(wd['event'] == 1) & (wd['duration_months'] < 6) & (wd['duration_months'] > 0), 'weight'].sum()
                 w_very = wd.loc[(wd['event'] == 1) & (wd['duration_months'] < 3) & (wd['duration_months'] > 0), 'weight'].sum()
                 w_still_12 = wd.loc[wd['duration_months'] >= 12, 'weight'].sum()
                 w_still_24 = wd.loc[wd['duration_months'] >= 24, 'weight'].sum()
                 
                 pct_never_bf = 100 * w_never / total_weight if total_weight > 0 else 0
-                pct_weaned_0_6mo_excl_never = 100 * w_early / total_weight if total_weight > 0 else 0
-                pct_weaned_before_6mo = 100 * (w_never + w_early) / total_weight if total_weight > 0 else 0
-                pct_weaned_before_3mo = 100 * (w_never + w_very) / total_weight if total_weight > 0 else 0
-                pct_still_bf_at_12mo = 100 * w_still_12 / total_weight if total_weight > 0 else 0
-                pct_still_bf_at_24mo = 100 * w_still_24 / total_weight if total_weight > 0 else 0
+                # Cessation and continuation come from the survival curve, not from counting
+                # recorded durations: a child interviewed at 3 months cannot yet have a
+                # recorded duration of 6 months, and children coded m4 = 93 have no
+                # recorded duration at all.
+                s3, s6, s12, s24 = (survival_at(wd, 3), survival_at(wd, 6),
+                                    survival_at(wd, 12), survival_at(wd, 24))
+                pct_weaned_before_6mo = 100 * (1 - s6) if not np.isnan(s6) else np.nan
+                pct_weaned_before_3mo = 100 * (1 - s3) if not np.isnan(s3) else np.nan
+                pct_weaned_0_6mo_excl_never = (pct_weaned_before_6mo - pct_never_bf
+                                               if not np.isnan(pct_weaned_before_6mo) else np.nan)
+                pct_still_bf_at_12mo = 100 * s12 if not np.isnan(s12) else np.nan
+                pct_still_bf_at_24mo = 100 * s24 if not np.isnan(s24) else np.nan
+                # crude counts kept for comparison with the previously published figures
+                crude_before_6mo = 100 * (w_never + w_early) / total_weight if total_weight > 0 else 0
+                crude_still_24 = 100 * w_still_24 / total_weight if total_weight > 0 else 0
             else:
                 # Unweighted fallback
                 never_bf = (country_data['duration_months'] == 0) & (country_data['event'] == 1)
@@ -209,7 +274,11 @@ def create_country_rankings(data: pd.DataFrame, output_dir: Path, logger):
             'pct_weaned_before_6mo': pct_weaned_before_6mo,
             'pct_weaned_before_3mo': pct_weaned_before_3mo,
             'pct_still_bf_at_12mo': pct_still_bf_at_12mo,
-            'pct_still_bf_at_24mo': pct_still_bf_at_24mo
+            'pct_still_bf_at_24mo': pct_still_bf_at_24mo,
+            'n_left_censored': int((country_data['censor_type'] == 'left').sum())
+                               if 'censor_type' in country_data.columns else 0,
+            'pct_weaned_before_6mo_crude_count': locals().get('crude_before_6mo', np.nan),
+            'pct_still_bf_at_24mo_crude_count': locals().get('crude_still_24', np.nan)
         })
     
     rankings_df = pd.DataFrame(rankings)
@@ -229,7 +298,7 @@ def create_country_rankings(data: pd.DataFrame, output_dir: Path, logger):
     rankings_df.to_excel(output_dir / 'country_rankings_complete.xlsx', index=False)
     
     # Create visualization of top and bottom performers
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(18, 8))
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 6.5))
     
     # Top 15 performers with gradient colors
     top15 = rankings_df.head(15)
@@ -241,13 +310,12 @@ def create_country_rankings(data: pd.DataFrame, output_dir: Path, logger):
         ax1.set_yticks(range(len(top15)))
         ax1.set_yticklabels([f"{row['country_name']} ({row['country_code']})" 
                              for _, row in top15.iterrows()])
-        ax1.set_xlabel('Median Duration (months)', fontsize=12)
-        ax1.set_title('Top 15 Countries by Median BF Duration', fontsize=14, fontweight='bold')
-        ax1.axvline(x=6, color='red', linestyle='--', alpha=0.5, label='WHO 6-month minimum')
-        ax1.axvline(x=24, color='blue', linestyle='--', alpha=0.3, label='WHO 24-month recommendation')
-        
-        # Place legend OUTSIDE the plot area (to the right)
-        ax1.legend(loc='center left', bbox_to_anchor=(1, 0.5), frameon=False)
+        ax1.set_xlabel('Median duration of any breastfeeding (months)', fontsize=13)
+        ax1.set_title('(A) 15 countries with the longest median duration', loc='left', fontsize=13, fontweight='bold')
+        ax1.axvline(x=6, color='red', linestyle='--', alpha=0.6, label='6 months (WHO exclusive breastfeeding recommendation)')
+        ax1.axvline(x=24, color='blue', linestyle='--', alpha=0.4, label='24 months (WHO continued breastfeeding recommendation)')
+        ax1.set_xlim(0, 40)
+        ax1.grid(axis='x', alpha=0.3)
         ax1.invert_yaxis()
     
     # Bottom 15 performers with gradient colors
@@ -260,17 +328,20 @@ def create_country_rankings(data: pd.DataFrame, output_dir: Path, logger):
         ax2.set_yticks(range(len(bottom15)))
         ax2.set_yticklabels([f"{row['country_name']} ({row['country_code']})" 
                              for _, row in bottom15.iterrows()])
-        ax2.set_xlabel('Median Duration (months)', fontsize=12)
-        ax2.set_title('Bottom 15 Countries by Median BF Duration', fontsize=14, fontweight='bold')
-        ax2.axvline(x=6, color='red', linestyle='--', alpha=0.5, label='WHO 6-month minimum')
-        ax2.axvline(x=24, color='blue', linestyle='--', alpha=0.3, label='WHO 24-month recommendation')
-        
-        # Place legend OUTSIDE the plot area (to the right)
-        ax2.legend(loc='center left', bbox_to_anchor=(1, 0.5), frameon=False)
+        ax2.set_xlabel('Median duration of any breastfeeding (months)', fontsize=13)
+        ax2.set_title('(B) 15 countries with the shortest median duration', loc='left', fontsize=13, fontweight='bold')
+        ax2.axvline(x=6, color='red', linestyle='--', alpha=0.6)
+        ax2.axvline(x=24, color='blue', linestyle='--', alpha=0.4)
+        ax2.set_xlim(0, 40)
+        ax2.grid(axis='x', alpha=0.3)
         ax2.invert_yaxis()
     
-    plt.suptitle('Country Rankings: Breastfeeding Duration', fontsize=16, fontweight='bold', y=1.02)
-    plt.tight_layout()
+    # One shared legend below both panels
+    handles, labels = ax1.get_legend_handles_labels()
+    fig.legend(handles, labels, loc='lower center', ncol=2, frameon=False, fontsize=11,
+               bbox_to_anchor=(0.5, -0.02))
+    plt.suptitle('Country Rankings: Median Duration of Any Breastfeeding', fontsize=15, fontweight='bold', y=1.0)
+    plt.tight_layout(rect=(0, 0.05, 1, 1))
     plt.savefig(output_dir / 'country_rankings_visualization.png', dpi=300, bbox_inches='tight')
     plt.close()
     
@@ -281,8 +352,15 @@ def analyze_never_breastfed(data: pd.DataFrame, output_dir: Path, logger):
     
     logger.info("Analyzing never breastfed patterns...")
     
-    # Identify never breastfed (duration=0 and event=1)
-    data['never_bf'] = ((data['duration_months'] == 0) & (data['event'] == 1)).astype(int)
+    # Identify never breastfed: m4 = 94 where the flag is available, otherwise fall
+    # back to duration 0, which also counts children who breastfed under a month
+    if 'never_breastfed' in data.columns:
+        data['never_bf'] = data['never_breastfed'].fillna(0).astype(int)
+        logger.info("  never-breastfed defined as m4 = 94")
+    else:
+        data['never_bf'] = ((data['duration_months'] == 0) & (data['event'] == 1)).astype(int)
+        logger.warning("  no never_breastfed flag in this extraction: falling back to "
+                       "duration 0, which also counts children who breastfed under a month")
     
     # Calculate by country
     country_never_bf = []
@@ -316,15 +394,15 @@ def analyze_never_breastfed(data: pd.DataFrame, output_dir: Path, logger):
     # Create visualization - Top 20 countries
     top20 = df_never.head(20)
     if len(top20) > 0:
-        fig, ax = plt.subplots(figsize=(10, 8))
+        fig, ax = plt.subplots(figsize=(9, 7))
         # Darker colors for taller bars
         colors = plt.cm.Reds(np.linspace(0.9, 0.3, len(top20)))
         bars = ax.barh(range(len(top20)), top20['pct_never_breastfed'], color=colors)
         ax.set_yticks(range(len(top20)))
         ax.set_yticklabels([f"{row['country_name']} ({row['country_code']})" 
                             for _, row in top20.iterrows()])
-        ax.set_xlabel('% Never Breastfed', fontsize=12)
-        ax.set_title('Top 20 Countries: Children Never Breastfed', fontsize=14, fontweight='bold')
+        ax.set_xlabel('% of children never breastfed (weighted)', fontsize=13)
+        ax.set_title('20 Countries with the Highest Prevalence of Never-Breastfed Children', fontsize=13, fontweight='bold')
         ax.grid(axis='x', alpha=0.3)
         ax.invert_yaxis()
         plt.tight_layout()
@@ -363,14 +441,14 @@ def analyze_never_breastfed(data: pd.DataFrame, output_dir: Path, logger):
     
     # Create regional never-BF visualization
     if len(regional_never_df) > 0:
-        fig, ax = plt.subplots(figsize=(10, 6))
+        fig, ax = plt.subplots(figsize=(9, 5.5))
         # Darker colors for taller bars
         colors = plt.cm.YlOrRd(np.linspace(0.9, 0.3, len(regional_never_df)))
         bars = ax.bar(range(len(regional_never_df)), regional_never_df['pct_never_bf'], color=colors)
         ax.set_xticks(range(len(regional_never_df)))
         ax.set_xticklabels(regional_never_df['region'], rotation=45, ha='right')
-        ax.set_ylabel('% Never Breastfed', fontsize=12)
-        ax.set_title('Never Breastfed Rates by Region', fontsize=14, fontweight='bold')
+        ax.set_ylabel('% of children never breastfed (weighted)', fontsize=13)
+        ax.set_title('Never-Breastfed Prevalence by Region', fontsize=13, fontweight='bold')
         ax.grid(axis='y', alpha=0.3)
         plt.tight_layout()
         plt.savefig(output_dir / 'never_breastfed_by_region.png', dpi=300, bbox_inches='tight')
@@ -481,7 +559,7 @@ def analyze_inequalities(data: pd.DataFrame, output_dir: Path, logger):
             bars = ax.barh(range(len(plot_data)), plot_data['urban_rural_gap'], color=colors, alpha=0.8)
             
             ax.set_yticks(range(len(plot_data)))
-            ax.set_yticklabels(plot_data['country_name'], fontsize=8)
+            ax.set_yticklabels(plot_data['country_name'], fontsize=10)
             ax.set_xlabel('Urban-Rural Gap in Median BF Duration (months)', fontsize=12)
             
             # Create title with subtitle on separate lines
@@ -527,13 +605,16 @@ def analyze_regional_patterns(data: pd.DataFrame, output_dir: Path, logger):
                 total_weight = wd['weight'].sum()
                 
                 # Calculate percentages
-                w_never = wd.loc[(wd['event']==1) & (wd['duration_months']==0), 'weight'].sum()
-                w_early = wd.loc[(wd['event']==1) & (wd['duration_months']<6), 'weight'].sum()
-                w_extended = wd.loc[wd['duration_months']>=24, 'weight'].sum()
-                
+                if 'never_breastfed' in wd.columns:
+                    w_never = wd.loc[wd['never_breastfed'] == 1, 'weight'].sum()
+                else:
+                    w_never = wd.loc[(wd['event']==1) & (wd['duration_months']==0), 'weight'].sum()
                 pct_never_bf = 100 * w_never / total_weight if total_weight > 0 else 0
-                pct_early_weaning = 100 * w_early / total_weight if total_weight > 0 else 0
-                pct_extended_bf = 100 * w_extended / total_weight if total_weight > 0 else 0
+                # Cessation before 6 months and continuation at 24 months come from the
+                # survival curve, for the reasons given in create_country_rankings.
+                s6, s24 = survival_at(wd, 6), survival_at(wd, 24)
+                pct_early_weaning = 100 * (1 - s6) if not np.isnan(s6) else np.nan
+                pct_extended_bf = 100 * s24 if not np.isnan(s24) else np.nan
             else:
                 pct_never_bf = 100 * ((region_data['event']==1) & (region_data['duration_months']==0)).mean()
                 pct_early_weaning = 100 * ((region_data['event']==1) & (region_data['duration_months']<6)).mean()
@@ -561,60 +642,59 @@ def analyze_regional_patterns(data: pd.DataFrame, output_dir: Path, logger):
         regional_df.to_excel(output_dir / 'regional_comparison.xlsx', index=False)
         
         # Create regional comparison plot
-        fig, axes = plt.subplots(2, 2, figsize=(14, 12))
+        fig, axes = plt.subplots(2, 2, figsize=(12, 10))
         
         # Sort regional_df by median duration for consistent ordering across all plots
         regional_df = regional_df.sort_values('median_duration', ascending=False)
         n_regions = len(regional_df)
         
-        # Median duration by region (GREENS - dark for tall bars)
+        # (A) Median duration by region (GREENS - dark for tall bars)
         ax = axes[0, 0]
         colors_median = plt.cm.Greens(np.linspace(0.9, 0.3, n_regions))
         bars = ax.bar(range(n_regions), regional_df['median_duration'], color=colors_median)
         ax.set_xticks(range(n_regions))
         ax.set_xticklabels(regional_df['region'], rotation=45, ha='right')
-        ax.set_ylabel('Median Duration (months)', fontsize=11)
-        ax.set_title('Median Breastfeeding Duration by Region', fontsize=12, fontweight='bold')
-        ax.axhline(y=6, color='red', linestyle='--', alpha=0.5, label='WHO 6-month minimum')
-        ax.axhline(y=24, color='blue', linestyle='--', alpha=0.3, label='WHO 24-month target')
-        # Legend outside the plot
-        ax.legend(fontsize=8, loc='upper left', bbox_to_anchor=(1, 1), frameon=False)
+        ax.set_ylabel('Median duration (months)', fontsize=13)
+        ax.set_title('(A) Median duration of any breastfeeding', loc='left', fontsize=13, fontweight='bold')
+        ax.axhline(y=6, color='red', linestyle='--', alpha=0.6, label='6 months (WHO exclusive breastfeeding rec.)')
+        ax.axhline(y=24, color='blue', linestyle='--', alpha=0.4, label='24 months (WHO continued breastfeeding rec.)')
+        ax.set_ylim(0, 30)
+        ax.legend(fontsize=9, loc='upper right', frameon=False)
         ax.grid(axis='y', alpha=0.3)
         
-        # Early weaning by region (BROWNS/ORANGES - dark for tall/bad bars)
+        # (B) Cessation before 6 months by region (ORANGES - dark for tall bars)
         ax = axes[0, 1]
         regional_sorted_ew = regional_df.sort_values('pct_early_weaning', ascending=False)
         colors_ew = plt.cm.Oranges(np.linspace(0.9, 0.3, n_regions))
         bars = ax.bar(range(n_regions), regional_sorted_ew['pct_early_weaning'], color=colors_ew)
         ax.set_xticks(range(n_regions))
         ax.set_xticklabels(regional_sorted_ew['region'], rotation=45, ha='right')
-        ax.set_ylabel('% Weaned Before 6 Months', fontsize=11)
-        ax.set_title('Early Weaning Rates by Region (Lower is Better)', fontsize=12, fontweight='bold')
+        ax.set_ylabel('% ceased before 6 months', fontsize=13)
+        ax.set_title('(B) Cessation of any breastfeeding before 6 months', loc='left', fontsize=13, fontweight='bold')
         ax.grid(axis='y', alpha=0.3)
         
-        # Sample size by region (BLUES - dark for tall bars)
+        # (C) Sample size by region (BLUES - dark for tall bars)
         ax = axes[1, 0]
         regional_sorted_n = regional_df.sort_values('n_children', ascending=False)
         colors_n = plt.cm.Blues(np.linspace(0.9, 0.3, n_regions))
         bars = ax.bar(range(n_regions), regional_sorted_n['n_children']/1000, color=colors_n)
         ax.set_xticks(range(n_regions))
         ax.set_xticklabels(regional_sorted_n['region'], rotation=45, ha='right')
-        ax.set_ylabel('Sample Size (thousands)', fontsize=11)
-        ax.set_title('Number of Children by Region', fontsize=12, fontweight='bold')
+        ax.set_ylabel('Number of children (thousands)', fontsize=13)
+        ax.set_title('(C) Sample size', loc='left', fontsize=13, fontweight='bold')
         ax.grid(axis='y', alpha=0.3)
         
-        # Extended breastfeeding by region (PURPLES - dark for tall/good bars)
+        # (D) Continued breastfeeding at 24 months by region (PURPLES - dark for tall bars)
         ax = axes[1, 1]
         regional_sorted_ext = regional_df.sort_values('pct_extended_bf', ascending=False)
         colors_ext = plt.cm.Purples(np.linspace(0.9, 0.3, n_regions))
         bars = ax.bar(range(n_regions), regional_sorted_ext['pct_extended_bf'], color=colors_ext)
         ax.set_xticks(range(n_regions))
         ax.set_xticklabels(regional_sorted_ext['region'], rotation=45, ha='right')
-        ax.set_ylabel('% Still BF at 24 Months', fontsize=11)
-        ax.set_title('Extended Breastfeeding by Region (Higher is Better)', fontsize=12, fontweight='bold')
+        ax.set_ylabel('% still breastfeeding at 24 months', fontsize=13)
+        ax.set_title('(D) Continued breastfeeding at 24 months', loc='left', fontsize=13, fontweight='bold')
         ax.grid(axis='y', alpha=0.3)
         
-        plt.suptitle('Regional Patterns in Breastfeeding Duration', fontsize=14, fontweight='bold', y=1.02)
         plt.tight_layout()
         plt.savefig(output_dir / 'regional_patterns.png', dpi=300, bbox_inches='tight')
         plt.close()
@@ -726,7 +806,16 @@ def main(data_file: str, output_dir: str):
     
     # Load data
     logger.info(f"Loading data from {data_file}")
-    data = pd.read_csv(data_file)
+    data = pd.read_csv(data_file, low_memory=False)
+    if 'censor_type' in data.columns:
+        vc = data['censor_type'].value_counts()
+        logger.info(f"Censoring mix: exact {int(vc.get('exact', 0)):,}, "
+                    f"right {int(vc.get('right', 0)):,}, left (m4=93) {int(vc.get('left', 0)):,}")
+        logger.info("Medians and prevalences use the Turnbull estimator wherever left-censored "
+                    "children are present, and Kaplan-Meier otherwise")
+    else:
+        logger.warning("No censor_type column: this looks like an extraction from before v2.3, "
+                       "in which children coded m4 = 93 were dropped")
     logger.info(f"Loaded {len(data):,} observations from {data['country'].nunique()} countries")
     
     # Clean data - remove any rows with null countries
@@ -792,12 +881,16 @@ Key Findings:
         valid_weights = weights.notna() & (weights > 0)
         if valid_weights.sum() > 0:
             weighted_data = data[valid_weights]
-            early_weaning_pct = (weighted_data[(weighted_data['event']==1) & 
-                                              (weighted_data['duration_months']<6)]['weight'].sum() / 
+            s6_global = survival_at(weighted_data, 6)
+            early_weaning_pct = (100 * (1 - s6_global) if not np.isnan(s6_global)
+                                 else np.nan)
+            if 'never_breastfed' in weighted_data.columns:
+                never_bf_pct = (weighted_data.loc[weighted_data['never_breastfed'] == 1, 'weight'].sum() /
                                 weighted_data['weight'].sum() * 100)
-            never_bf_pct = (weighted_data[(weighted_data['duration_months']==0) & 
-                                        (weighted_data['event']==1)]['weight'].sum() / 
-                           weighted_data['weight'].sum() * 100)
+            else:
+                never_bf_pct = (weighted_data[(weighted_data['duration_months']==0) & 
+                                            (weighted_data['event']==1)]['weight'].sum() / 
+                               weighted_data['weight'].sum() * 100)
         else:
             early_weaning_pct = (data[(data['event']==1) & (data['duration_months']<6)].shape[0] / len(data) * 100)
             never_bf_pct = (data[(data['duration_months']==0) & (data['event']==1)].shape[0] / len(data) * 100)
@@ -808,7 +901,7 @@ Key Findings:
     summary_text += f"""
 3. EARLY WEANING AND NEVER BREASTFED BURDEN
 - Global never breastfed: {never_bf_pct:.1f}%
-- Global early weaning (<6 months): {early_weaning_pct:.1f}%
+- Global cessation of any breastfeeding before 6 months: {early_weaning_pct:.1f}%
 - Countries with >30% early weaning: {len(rankings_df[rankings_df['pct_weaned_before_6mo'] > 30]) if len(rankings_df) > 0 else 0}
 - Countries with >5% never breastfed: {len(rankings_df[rankings_df['pct_never_breastfed'] > 5]) if len(rankings_df) > 0 else 0}
 

@@ -18,7 +18,7 @@ warnings.filterwarnings('ignore')
 
 # -------------------- Configuration --------------------
 REQUIRED_VARS = ['m4', 'b19', 'v008', 'b3', 'b5', 'v005', 'v021', 'v024', 'v025']
-OPTIONAL_VARS = ['v022', 'v023', 'v012', 'v106', 'v190', 'b4', 'v102',
+OPTIONAL_VARS = ['m5', 'v022', 'v023', 'v012', 'v106', 'v190', 'b4', 'v102',
                  'v201', 'v404', 'v501', 'm14', 'm15', 'm17', 'm19', 'h10', 'v007']
 EXTRACT_VARS = REQUIRED_VARS + OPTIONAL_VARS
 
@@ -90,10 +90,9 @@ def read_dta_from_zip(zip_path: Path, member: str, columns=None, nrows=None) -> 
         except:
             # Fallback to pandas
             try:
+                df = pd.read_stata(temp_path, convert_categoricals=False)
                 if nrows is not None:
-                    df = pd.read_stata(temp_path, convert_categoricals=False, nrows=nrows)
-                else:
-                    df = pd.read_stata(temp_path, convert_categoricals=False)
+                    df = df.head(nrows)
                 if columns:
                     keep_cols = [c for c in columns if c in df.columns]
                     df = df[keep_cols]
@@ -164,10 +163,14 @@ def process_kr_file(zip_path: Path, dta_name: str, country_code: str,
     # Censored: 95 (still breastfeeding - use age as duration)
     # Invalid: 96, 97, 98, 99 (drop these)
 
-    mask_real_duration = (df_eligible['m4'] >= 0) & (df_eligible['m4'] <= 93)
+    # m4 = 93 is the DHS code "ever breastfed, not currently breastfeeding": the
+    # child has stopped, but no duration was recorded. The event time is known only
+    # to lie before the child's current age (LEFT-CENSORED). It is not 93 months.
+    mask_real_duration = (df_eligible['m4'] >= 0) & (df_eligible['m4'] <= 92)
+    mask_left_cens = (df_eligible['m4'] == 93)
     mask_never_bf = (df_eligible['m4'] == 94)
     mask_censored = (df_eligible['m4'] == 95)
-    mask_valid = mask_real_duration | mask_never_bf | mask_censored
+    mask_valid = mask_real_duration | mask_left_cens | mask_never_bf | mask_censored
 
     # Keep only valid observations
     df_final = df_eligible[mask_valid].copy()
@@ -177,7 +180,8 @@ def process_kr_file(zip_path: Path, dta_name: str, country_code: str,
         return pd.DataFrame()
 
     # Set duration and event indicators using proper masking
-    mask_real = (df_final['m4'] >= 0) & (df_final['m4'] <= 93)
+    mask_real = (df_final['m4'] >= 0) & (df_final['m4'] <= 92)
+    mask_left = (df_final['m4'] == 93)
     mask_never = (df_final['m4'] == 94)
     mask_cens = (df_final['m4'] == 95)
 
@@ -185,9 +189,22 @@ def process_kr_file(zip_path: Path, dta_name: str, country_code: str,
     df_final['duration_months'] = np.where(
         mask_real, df_final['m4'],      # Use m4 value for real durations
         np.where(mask_never, 0,          # Never breastfed = 0 duration
-                df_final['age_months'])   # Still BF = use current age
+                df_final['age_months'])   # Still BF or left-censored: current age
     )
     df_final['event'] = (mask_real | mask_never).astype(int)  # Both are events
+
+    # censor_type: exact = duration reported, or never breastfed (event at time 0)
+    #              right = still breastfeeding at interview (m4 = 95)
+    #              left  = stopped before interview, duration not recorded (m4 = 93)
+    df_final['censor_type'] = np.where(mask_left, 'left',
+                                np.where(mask_cens, 'right', 'exact'))
+
+    # Bounds for interval-censored (Turnbull) estimation:
+    #   exact -> [t, t]      right -> [t, inf)      left -> [0, current age]
+    df_final['t_lower'] = np.where(mask_left, 0.0, df_final['duration_months'])
+    df_final['t_upper'] = np.where(mask_cens, np.inf,
+                            np.where(mask_left, df_final['age_months'],
+                                     df_final['duration_months']))
 
     # Final validity check on duration
     valid_duration = (df_final['duration_months'] >= 0) & (df_final['duration_months'] <= 60)
@@ -209,9 +226,14 @@ def process_kr_file(zip_path: Path, dta_name: str, country_code: str,
     if 'v024' in df_final.columns:
         df_final['region'] = df_final['v024']
 
+    # never_breastfed is m4 = 94 exactly, which is NOT the same as duration 0:
+    # a child who breastfed for less than a month also has duration 0.
+    df_final['never_breastfed'] = (df_final['m4'] == 94).astype(int)
+
     # Keep only necessary columns for final dataset
     keep_cols = ['country', 'survey_year', 'duration_months', 'event', 'age_months',
-                 'v005', 'v021']  # Always keep weights and PSU
+                 'censor_type', 't_lower', 't_upper', 'm4', 'never_breastfed',
+                 'v005', 'v021']  # weights, PSU, censoring type and the raw m4 code
 
     # Add optional columns if they exist
     for col in ['v022', 'v023', 'v024', 'v025', 'urban', 'wealth_quintile',
@@ -225,6 +247,20 @@ def process_kr_file(zip_path: Path, dta_name: str, country_code: str,
     if 'm4' in df_final.columns:
         n_never = int((df_final['m4'] == 94).sum())
         logger.info(f"  Never-breastfed (m4=94): {n_never}")
+
+    # Log never-breastfed against duration-zero so the two are never confused
+    n_nbf = int(df_output['never_breastfed'].sum())
+    n_dur0 = int(((df_output['duration_months'] == 0) & (df_output['event'] == 1)).sum())
+    logger.info(f"  never breastfed (m4=94): {n_nbf}; duration 0 events (incl. <1 month): {n_dur0}")
+
+    # Log the censoring mix so surveys without retrospective durations are visible
+    n_exact = int((df_output['censor_type'] == 'exact').sum())
+    n_right = int((df_output['censor_type'] == 'right').sum())
+    n_left = int((df_output['censor_type'] == 'left').sum())
+    logger.info(f"  Censoring: exact {n_exact}, right {n_right}, left (m4=93) {n_left}")
+    if n_left > 0 and (df_output['event'] == 1).sum() == n_never:
+        logger.warning(f"  {country_code}: no retrospective durations in this survey "
+                       f"(current-status data only)")
 
     logger.info(f"  Extracted {len(df_output)} children from {country_code}")
 
@@ -393,7 +429,7 @@ def main(zip_dir: str, scan_file: str, output_dir: str):
     # Setup logging
     logger = setup_logging(output_dir)
     logger.info("=" * 60)
-    logger.info("BREASTFEEDING DATA EXTRACTION (v2.2 - Fixed m4=94)")
+    logger.info("BREASTFEEDING DATA EXTRACTION (v2.4 - keeps m4 and a never_breastfed flag)")
     logger.info(f"Started at: {datetime.now()}")
     logger.info("=" * 60)
 
@@ -404,6 +440,7 @@ def main(zip_dir: str, scan_file: str, output_dir: str):
     # Process each dataset
     all_data = []
     failed_files = []
+    seen_dta = {}
 
     for idx, row in ready_datasets.iterrows():
         zip_name = row['zip']
@@ -414,6 +451,15 @@ def main(zip_dir: str, scan_file: str, output_dir: str):
             logger.warning(f"Zip file not found: {zip_name}")
             failed_files.append(zip_name)
             continue
+
+        # The same KR dataset can be listed under two zips (e.g. PEKR51FL.DTA in
+        # both PEKR51DT.zip and PEKR5ADT.zip). Extract it once.
+        key = str(dta_name).upper()
+        if key in seen_dta:
+            logger.warning(f"Duplicate dataset {dta_name} in {zip_name}: already read "
+                           f"from {seen_dta[key]}, skipping")
+            continue
+        seen_dta[key] = zip_name
 
         country_code = extract_country_code(zip_name)
         survey_year = extract_survey_year(zip_name)  # Will be refined from data if v007 available
@@ -447,11 +493,16 @@ def main(zip_dir: str, scan_file: str, output_dir: str):
 
         # Also save as Stata file if possible
         try:
-            combined_df.to_stata(output_dir / 'combined_breastfeeding_data.dta',
-                               write_index=False, version=117)
-            logger.info("Saved Stata format (.dta)")
-        except:
-            logger.warning("Could not save Stata format")
+            # t_upper is inf for right-censored rows, which Stata cannot store;
+            # write it as missing there and keep the CSV as the authoritative file.
+            stata_df = combined_df.copy()
+            if 't_upper' in stata_df.columns:
+                stata_df['t_upper'] = stata_df['t_upper'].replace([np.inf, -np.inf], np.nan)
+            stata_df.to_stata(output_dir / 'combined_breastfeeding_data.dta',
+                              write_index=False, version=117)
+            logger.info("Saved Stata format (.dta); t_upper = missing marks right-censored rows")
+        except Exception as e:
+            logger.warning(f"Could not save Stata format: {e}")
 
         # Create summary statistics
         logger.info("\nCreating summary statistics...")

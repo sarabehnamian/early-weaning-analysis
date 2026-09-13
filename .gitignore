@@ -1,0 +1,61 @@
+# ---------------------------------------------------------------------------
+# No data in this repository.
+# DHS data are obtained from dhsprogram.com under their terms of use and must
+# not be redistributed. Everything a run produces is reproducible from the
+# scripts, so outputs are not tracked either.
+# ---------------------------------------------------------------------------
+
+# DHS source data
+data/
+dhs_zips/
+*.zip
+*.DTA
+*.dta
+*.SAV
+*.sav
+*.MAP
+*.map
+urlslist*.txt
+download_list.txt
+
+# Extraction and analysis output folders
+02_extract*/
+03_survival*/
+04_comparative*/
+06_ph_assumption_test/
+07_never_breastfed_sensitivity/
+08_recent_surveys_sensitivity/
+r1*/
+r2*/
+m4_special_codes_report/
+fig1/
+supplementary_Materials/
+
+# Result files
+*.csv
+*.xlsx
+*.xls
+*.docx
+*.pdf
+*.tif
+*.tiff
+*.png
+*.log
+*_log.txt
+extraction_log.txt
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.ipynb_checkpoints/
+
+# OS and editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# superseded working scripts
+old/

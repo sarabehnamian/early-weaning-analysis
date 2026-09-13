@@ -25,6 +25,17 @@ import seaborn as sns
 plt.style.use('default')  # Use default style to avoid seaborn version issues
 sns.set_palette("husl")
 
+# Publication figure settings (R1.5): larger fonts, 300 dpi kept in every savefig
+plt.rcParams.update({
+    'font.size': 12,
+    'axes.labelsize': 13,
+    'axes.titlesize': 14,
+    'xtick.labelsize': 11,
+    'ytick.labelsize': 11,
+    'legend.fontsize': 11,
+    'figure.titlesize': 15,
+})
+
 # -------------------- Configuration --------------------
 
 # Regional groupings based on DHS country codes
@@ -101,7 +112,7 @@ def kaplan_meier_by_group(data: pd.DataFrame, group_var: str, output_dir: Path,
     # Use tab20 colormap for distinct colors
     cmap = cm.tab20  # Direct access to colormap
     kmf = KaplanMeierFitter()
-    fig, ax = plt.subplots(figsize=(12, 8))
+    fig, ax = plt.subplots(figsize=(9, 5.5))
 
     groups = data[group_var].dropna().unique()
     if top_n and len(groups) > top_n:
@@ -118,30 +129,55 @@ def kaplan_meier_by_group(data: pd.DataFrame, group_var: str, output_dir: Path,
             w = g['weight']
             valid = w.notna() & (w > 0)
             g = g.loc[valid]
-            if len(g) < 30 or g['event'].sum() == 0 or g['weight'].sum() <= 0:
+            if len(g) < 30 or g['weight'].sum() <= 0:
                 continue
-            kmf.fit(g['duration_months'], event_observed=g['event'], weights=g['weight'],
-                    label=f"{group} (n={len(g):,})")
+        label = f"{group} (n={len(g):,})"
+
+        # Children coded m4 = 93 stopped breastfeeding at an unknown time before the
+        # interview (left-censored). An ordinary Kaplan-Meier estimator cannot use
+        # them, so where they occur we fit the Turnbull NPMLE from the interval
+        # bounds [t_lower, t_upper] instead.
+        n_left = int((g['censor_type'] == 'left').sum()) if 'censor_type' in g.columns else 0
+        if n_left > 0 and {'t_lower', 't_upper'}.issubset(g.columns):
+            lo = pd.to_numeric(g['t_lower'], errors='coerce').to_numpy(dtype=float)
+            up = pd.to_numeric(g['t_upper'], errors='coerce').to_numpy(dtype=float)
+            up = np.where(np.isnan(up), np.inf, up)
+            if 'weight' in g.columns:
+                kmf.fit_interval_censoring(lo, up, weights=g['weight'].to_numpy(dtype=float),
+                                           label=label)
+            else:
+                kmf.fit_interval_censoring(lo, up, label=label)
         else:
-            kmf.fit(g['duration_months'], event_observed=g['event'],
-                    label=f"{group} (n={len(g):,})")
+            if g['event'].sum() == 0:
+                continue
+            if 'weight' in g.columns:
+                kmf.fit(g['duration_months'], event_observed=g['event'], weights=g['weight'],
+                        label=label)
+            else:
+                kmf.fit(g['duration_months'], event_observed=g['event'], label=label)
 
         # Get color from colormap
         color = cmap(i % 20)  # tab20 has 20 colors
-        kmf.plot_survival_function(ax=ax, ci_show=False, color=color, linewidth=2)
-        medians[group] = kmf.median_survival_time_
+        sf = kmf.survival_function_
+        ax.step(sf.index.values, sf.iloc[:, 0].values, where='post',
+                color=color, linewidth=2, label=label)
+        med = kmf.median_survival_time_
+        if isinstance(med, (pd.DataFrame, pd.Series)):   # interval-censored: bounds
+            med = float(np.asarray(med, dtype=float).ravel().mean())
+        medians[group] = float(med)
 
-    ax.set_xlabel('Time (months)', fontsize=12)
-    ax.set_ylabel('Probability of Still Breastfeeding', fontsize=12)
-    ax.set_title(f'Breastfeeding Duration by {title_suffix} (Weighted)', fontsize=14, fontweight='bold')
+    ax.set_xlabel('Time (months)', fontsize=13)
+    ax.set_ylabel('Probability of Still Breastfeeding', fontsize=13)
+    ax.set_title(f'Probability of Continuing Any Breastfeeding by {title_suffix} (Weighted)',
+                 fontsize=13, fontweight='bold')
     ax.set_xlim(0, 36)
     ax.grid(True, alpha=0.25)
 
-    # WHO 6-month reference
-    ax.axvline(x=6, color='#CC3344', linestyle='--', alpha=0.6, label='WHO 6-month recommendation')
+    # 6-month reference line (R2.13: this is the WHO exclusive-breastfeeding recommendation, not a minimum duration of any breastfeeding)
+    ax.axvline(x=6, color='#CC3344', linestyle='--', alpha=0.6, label='6 months (WHO exclusive\nbreastfeeding recommendation)')
 
     # lean legend outside
-    leg = ax.legend(bbox_to_anchor=(1.02, 1), loc='upper left', frameon=False, fontsize=9, borderaxespad=0.)
+    leg = ax.legend(bbox_to_anchor=(1.02, 1), loc='upper left', frameon=False, fontsize=10, borderaxespad=0.)
     
     # FIXED: Use 'legend_handles' instead of 'legendHandles'
     for lh in leg.legend_handles:
@@ -151,6 +187,76 @@ def kaplan_meier_by_group(data: pd.DataFrame, group_var: str, output_dir: Path,
     plt.savefig(output_dir / f"km_by_{group_var.replace('/', '_')}.png", dpi=300, bbox_inches='tight')
     plt.close()
     return medians
+
+# Human-readable covariate labels for the forest plot (wording follows the manuscript).
+# Rows with var=None are group headers naming the reference category.
+FOREST_ROWS = [
+    ('Residence (reference: rural)', None),
+    ('    Urban residence', 'urban'),
+    ('Household wealth (reference: middle quintile, Q3)', None),
+    ('    Poorest quintile (Q1)', 'wealth_q1'),
+    ('    Second quintile (Q2)', 'wealth_q2'),
+    ('    Fourth quintile (Q4)', 'wealth_q4'),
+    ('    Richest quintile (Q5)', 'wealth_q5'),
+    ('Maternal education (reference: primary)', None),
+    ('    No formal education', 'educ_none'),
+    ('    Secondary or higher', 'educ_secondary_plus'),
+]
+
+def plot_forest(results_df: pd.DataFrame, output_dir: Path):
+    """Forest plot of hazard ratios (log scale) with 95% CIs and numeric annotations."""
+    from matplotlib.ticker import FixedLocator, NullLocator, FormatStrFormatter
+
+    hr = results_df['exp(coef)']
+    lo = results_df['exp(coef) lower 95%']
+    hi = results_df['exp(coef) upper 95%']
+
+    rows = [(lab, var) for lab, var in FOREST_ROWS if var is None or var in results_df.index]
+    mapped = {var for _, var in FOREST_ROWS if var is not None}
+    for var in results_df.index:            # any covariate not in the mapping still gets drawn
+        if var not in mapped:
+            rows.append((f'    {var}', var))
+
+    n = len(rows)
+    ys = np.arange(n)[::-1]                  # first row at the top
+    fig, ax = plt.subplots(figsize=(9, 0.5 * n + 1.2))
+
+    xmax_data = float(hi.max())
+    x_text = xmax_data * 1.06
+    for y, (lab, var) in zip(ys, rows):
+        if var is None:
+            continue
+        ax.errorbar(hr[var], y, xerr=[[hr[var] - lo[var]], [hi[var] - hr[var]]],
+                    fmt='s', color='black', markersize=6, capsize=3, linewidth=1.2)
+        ax.text(x_text, y, f"{hr[var]:.2f} ({lo[var]:.2f}\u2013{hi[var]:.2f})",
+                va='center', ha='left', fontsize=11)
+
+    ax.axvline(1.0, color='grey', linestyle='--', linewidth=1)
+    ax.set_yticks(ys)
+    ax.set_yticklabels([lab for lab, _ in rows])
+    for tick, (lab, var) in zip(ax.get_yticklabels(), rows):
+        if var is None:
+            tick.set_fontweight('bold')
+    ax.set_ylim(-0.7, n - 0.3)
+
+    ax.set_xscale('log')
+    xmin = float(lo.min()) * 0.95
+    xmax = xmax_data * 1.45
+    ax.set_xlim(xmin, xmax)
+    ticks = [t for t in [0.7, 0.8, 0.9, 1.0, 1.1, 1.2, 1.3, 1.5] if xmin <= t <= xmax_data * 1.08]
+    ax.xaxis.set_major_locator(FixedLocator(ticks))
+    ax.xaxis.set_minor_locator(NullLocator())
+    ax.xaxis.set_major_formatter(FormatStrFormatter('%.1f'))
+    ax.set_xlabel('Hazard ratio for cessation of any breastfeeding (95% CI), log scale', fontsize=13)
+    ax.set_title('Adjusted Hazard Ratios from Survey-Weighted, Stratified Cox Models',
+                 fontsize=14, fontweight='bold')
+    ax.grid(axis='x', alpha=0.25)
+    for side in ('top', 'right'):
+        ax.spines[side].set_visible(False)
+
+    plt.tight_layout()
+    plt.savefig(output_dir / 'hazard_ratios_forest_plot.png', dpi=300, bbox_inches='tight')
+    plt.close()
 
 def cox_regression_analysis(data: pd.DataFrame, output_dir: Path, logger):
     """Perform weighted Cox proportional hazards regression."""
@@ -217,16 +323,8 @@ def cox_regression_analysis(data: pd.DataFrame, output_dir: Path, logger):
         results_df = cph.summary
         results_df.to_excel(output_dir / 'cox_regression_results.xlsx')
 
-        # Create forest plot
-        fig, ax = plt.subplots(figsize=(10, 6))
-        cph.plot(ax=ax)
-        ax.set_title('Hazard Ratios for Early Weaning (Weighted)', fontsize=14, fontweight='bold')
-        ax.axvline(x=1, color='black', linestyle='-', alpha=0.3)
-        plt.tight_layout()
-
-        # Save only once to cox_models folder at 300 dpi
-        plt.savefig(output_dir / 'hazard_ratios_forest_plot.png', dpi=300, bbox_inches='tight')
-        plt.close()
+        # Create forest plot (manuscript wording, HR on log scale)
+        plot_forest(results_df, output_dir)
 
         logger.info(f"Cox regression completed. C-index: {cph.concordance_index_:.3f}")
 
@@ -236,8 +334,43 @@ def cox_regression_analysis(data: pd.DataFrame, output_dir: Path, logger):
         logger.error(f"Cox regression failed: {e}")
         return None
 
+def _survival_at(g: pd.DataFrame, t: float):
+    """Weighted probability of still breastfeeding at t months.
+
+    Uses the Turnbull NPMLE where the group contains children coded m4 = 93
+    (stopped before the interview, duration unrecorded, i.e. left-censored) and
+    the ordinary Kaplan-Meier estimator otherwise. Returns None if neither can
+    be fitted.
+    """
+    kmf = KaplanMeierFitter()
+    w = g['weight'].to_numpy(dtype=float) if 'weight' in g.columns else None
+    n_left = int((g['censor_type'] == 'left').sum()) if 'censor_type' in g.columns else 0
+    try:
+        if n_left > 0 and {'t_lower', 't_upper'}.issubset(g.columns):
+            lo = pd.to_numeric(g['t_lower'], errors='coerce').to_numpy(dtype=float)
+            up = pd.to_numeric(g['t_upper'], errors='coerce').to_numpy(dtype=float)
+            up = np.where(np.isnan(up), np.inf, up)
+            kmf.fit_interval_censoring(lo, up, weights=w)
+        else:
+            if g['event'].sum() == 0:
+                return None
+            kmf.fit(g['duration_months'], event_observed=g['event'], weights=w)
+    except Exception:
+        return None
+    sf = kmf.survival_function_
+    idx = sf.index.get_indexer([t], method='ffill')[0]
+    return float(sf.iloc[idx, 0]) if idx >= 0 else 1.0
+
+
 def analyze_early_weaning(data: pd.DataFrame, output_dir: Path):
-    """Analyze proportion of very early weaning (<6 months) using weights."""
+    """Prevalence of cessation of any breastfeeding before 6 months, by country.
+
+    Estimated as 1 - S(6) from the weighted survival curve rather than by counting
+    children whose recorded duration is under 6 months. Counting understates the
+    prevalence: children still under 6 months at interview cannot yet have a
+    recorded duration of 6 months, and children coded m4 = 93 have no recorded
+    duration at all.
+    """
 
     results = []
 
@@ -245,32 +378,31 @@ def analyze_early_weaning(data: pd.DataFrame, output_dir: Path):
         country_data = data[data['country'] == country].copy()
 
         if 'weight' in country_data.columns:
-            # Weighted calculation
             w = country_data['weight']
-            valid = w.notna() & (w > 0)
-            cw = country_data.loc[valid]
+            country_data = country_data.loc[w.notna() & (w > 0)]
+        if len(country_data) == 0:
+            continue
 
-            if len(cw) == 0:
-                continue
+        s6 = _survival_at(country_data, 6)
+        if s6 is None:
+            continue
+        pct_weaned_before_6m = 100.0 * (1.0 - s6)
 
-            ew = cw[(cw['event'] == 1) & (cw['duration_months'] < 6)]
-
-            pct_weaned_before_6m = 100.0 * ew['weight'].sum() / cw['weight'].sum() if cw['weight'].sum() > 0 else 0
-            n_weaned = len(ew)
-        else:
-            # Unweighted fallback
-            country_early = country_data[(country_data['event'] == 1) &
-                                        (country_data['duration_months'] < 6)]
-            pct_weaned_before_6m = (len(country_early) / len(country_data) * 100) if len(country_data) > 0 else 0
-            n_weaned = len(country_early)
+        # crude count kept for comparison with the previously published figures
+        cw = country_data
+        ew = cw[(cw['event'] == 1) & (cw['duration_months'] < 6)]
+        crude = (100.0 * ew['weight'].sum() / cw['weight'].sum()
+                 if 'weight' in cw.columns and cw['weight'].sum() > 0 else np.nan)
 
         results.append({
             'country': country,
             'n_children': len(country_data),
-            'n_weaned_before_6m': n_weaned,
+            'n_left_censored': int((country_data['censor_type'] == 'left').sum())
+                               if 'censor_type' in country_data.columns else 0,
+            'n_weaned_before_6m': len(ew),
             'pct_weaned_before_6m': pct_weaned_before_6m,
-            'median_early_weaning_age': country_data[(country_data['event'] == 1) &
-                                                    (country_data['duration_months'] < 6)]['duration_months'].median()
+            'pct_weaned_before_6m_crude_count': crude,
+            'median_early_weaning_age': ew['duration_months'].median()
         })
 
     results_df = pd.DataFrame(results)
@@ -281,7 +413,7 @@ def analyze_early_weaning(data: pd.DataFrame, output_dir: Path):
     top20 = results_df.head(20)
 
     if len(top20) > 0:
-        fig, ax = plt.subplots(figsize=(12, 8))
+        fig, ax = plt.subplots(figsize=(9, 5.5))
         
         # Create gradient colors from dark red (highest) to light yellow (lowest)
         # Using a red-orange-yellow gradient for better visual impact
@@ -290,9 +422,9 @@ def analyze_early_weaning(data: pd.DataFrame, output_dir: Path):
         bars = ax.bar(range(len(top20)), top20['pct_weaned_before_6m'], color=colors)
         ax.set_xticks(range(len(top20)))
         ax.set_xticklabels(top20['country'], rotation=45, ha='right')
-        ax.set_ylabel('% Weaned Before 6 Months (Weighted)', fontsize=12)
-        ax.set_title('Countries with Highest Rates of Early Weaning (<6 months)',
-                    fontsize=14, fontweight='bold')
+        ax.set_ylabel('% Ceased Any Breastfeeding Before 6 Months (Weighted)', fontsize=13)
+        ax.set_title('20 Countries with the Highest Prevalence of Cessation\nof Any Breastfeeding Before 6 Months',
+                    fontsize=13, fontweight='bold')
         ax.grid(axis='y', alpha=0.3)
 
         # NO VALUE LABELS - removed the for loop that added text labels
@@ -334,7 +466,7 @@ def create_summary_report(data: pd.DataFrame, output_dir: Path, logger):
                 'Weaning Rate % (unweighted)': data['event'].mean() * 100,
                 'Mean Duration (weighted)': np.average(dw['duration_months'], weights=dw['weight']) if len(dw) > 0 else np.nan,
                 'Mean Duration (unweighted)': data['duration_months'].mean(),
-                'Median Follow-up (months)': data['duration_months'].median()
+                'Median of recorded duration column (NOT a survival median)': data['duration_months'].median()
             }])
         else:
             # Unweighted version
@@ -345,7 +477,7 @@ def create_summary_report(data: pd.DataFrame, output_dir: Path, logger):
                 'Total Censored': int((1 - data['event']).sum()),
                 'Overall Weaning Rate (%)': data['event'].mean() * 100,
                 'Mean Duration (months)': data['duration_months'].mean(),
-                'Median Follow-up (months)': data['duration_months'].median()
+                'Median of recorded duration column (NOT a survival median)': data['duration_months'].median()
             }])
 
         overall.T.to_excel(writer, sheet_name='Overall_Summary')
@@ -456,7 +588,7 @@ def create_summary_report(data: pd.DataFrame, output_dir: Path, logger):
 
 # -------------------- Main Function --------------------
 
-def main(data_file: str, output_dir: str):
+def main(data_file: str, output_dir: str, skip_cox: bool = False, cox_results: str = None):
     """Main analysis function."""
 
     # Setup paths
@@ -473,11 +605,21 @@ def main(data_file: str, output_dir: str):
 
     # Load data
     logger.info(f"Loading data from {data_file}")
-    data = pd.read_csv(data_file)
+    data = pd.read_csv(data_file, low_memory=False)
     logger.info(f"Loaded {len(data):,} observations from {data['country'].nunique()} countries")
 
     # Clean data - remove any rows with null countries
     data = data[data['country'].notna()]
+
+    if 'censor_type' in data.columns:
+        vc = data['censor_type'].value_counts()
+        logger.info(f"Censoring mix: exact {int(vc.get('exact', 0)):,}, "
+                    f"right {int(vc.get('right', 0)):,}, left (m4=93) {int(vc.get('left', 0)):,}")
+        logger.info("Curves and medians use the Turnbull estimator wherever left-censored "
+                    "children are present, and Kaplan-Meier otherwise")
+    else:
+        logger.warning("No censor_type column: this looks like an extraction from before v2.3, "
+                       "in which children coded m4 = 93 were dropped")
 
     # Add survey weights
     if 'v005' in data.columns:
@@ -510,7 +652,18 @@ def main(data_file: str, output_dir: str):
         )
 
     # 4. Cox regression
-    if 'weight' in data.columns and 'survey_year' in data.columns:
+    saved_cox = Path(cox_results) if cox_results else dirs['cox'] / 'cox_regression_results.xlsx'
+    if cox_results:
+        logger.info(f"--cox-results: drawing the forest plot from {saved_cox} (no refit)")
+        cox_tbl = pd.read_excel(saved_cox, index_col=0)
+        plot_forest(cox_tbl, dirs['cox'])
+        cox_tbl.to_excel(dirs['cox'] / 'cox_regression_results.xlsx')
+        cox_model = None
+    elif skip_cox and saved_cox.exists():
+        logger.info("--skip-cox: re-drawing the forest plot from saved cox_regression_results.xlsx (no refit)")
+        plot_forest(pd.read_excel(saved_cox, index_col=0), dirs['cox'])
+        cox_model = None
+    elif 'weight' in data.columns and 'survey_year' in data.columns:
         cox_model = cox_regression_analysis(data, dirs['cox'], logger)
     else:
         logger.warning("Skipping Cox regression - requires weights and survey_year")
@@ -579,12 +732,22 @@ def main(data_file: str, output_dir: str):
         w = data['weight']
         valid = w.notna() & (w > 0)
         dw = data.loc[valid]
-        early_pct = (dw[(dw['event']==1) & (dw['duration_months']<6)]['weight'].sum() /
-                    dw['weight'].sum() * 100) if dw['weight'].sum() > 0 else 0
-        logger.info(f"  - Early weaning (<6mo): {early_pct:.1f}% (weighted)")
+        s6 = _survival_at(dw, 6)
+        s12 = _survival_at(dw, 12)
+        s24 = _survival_at(dw, 24)
+        if s6 is not None:
+            logger.info(f"  - Ceased any breastfeeding by 6 months:  {100*(1-s6):.1f}% (weighted, 1 - S(6))")
+        if s12 is not None:
+            logger.info(f"  - Ceased any breastfeeding by 12 months: {100*(1-s12):.1f}%")
+        if s24 is not None:
+            logger.info(f"  - Ceased any breastfeeding by 24 months: {100*(1-s24):.1f}%")
+        crude = (dw[(dw['event']==1) & (dw['duration_months']<6)]['weight'].sum() /
+                 dw['weight'].sum() * 100) if dw['weight'].sum() > 0 else 0
+        logger.info(f"  - (crude count of recorded durations < 6 months: {crude:.1f}%, "
+                    f"understates the prevalence)")
     else:
         early_pct = (data[(data['event']==1) & (data['duration_months']<6)].shape[0] / len(data) * 100)
-        logger.info(f"  - Early weaning (<6mo): {early_pct:.1f}% (unweighted)")
+        logger.info(f"  - Early weaning (<6mo): {early_pct:.1f}% (unweighted crude count)")
 
     logger.info("=" * 60)
     logger.info(f"Completed at: {datetime.now()}")
@@ -599,6 +762,11 @@ if __name__ == "__main__":
     parser.add_argument("--out",
                        default="./03_survival_analysis",
                        help="Output directory for results")
+    parser.add_argument("--cox-results", default=None,
+                        help="path to cox results from r26_cox_exact.py; draws the forest plot "
+                             "from that fit instead of refitting here")
+    parser.add_argument("--skip-cox", action="store_true",
+                       help="Do not refit the Cox model; redraw the forest plot from the saved results file")
 
     args = parser.parse_args()
-    main(args.data, args.out)
+    main(args.data, args.out, args.skip_cox, args.cox_results)
