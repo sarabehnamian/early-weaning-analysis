@@ -1,6 +1,8 @@
 # Early Weaning Analysis Pipeline
 
-Analysis code for a multi-country study of breastfeeding duration using DHS
+Analysis code for *Wealth, education and urbanization as predictors of early
+cessation of any breastfeeding in a multi-country survival analysis of 96 low-
+and middle-income countries*, using DHS
 (Demographic and Health Survey) data. The pipeline estimates the duration of
 **any** breastfeeding across 96 low- and middle-income countries with
 survey-weighted survival methods, and models the association of residence,
@@ -77,17 +79,21 @@ python 01_scan_to_excel.py ".\data" --out "Bfeed_scan.xlsx"
 python 02_extract_breastfeeding_data.py ".\data" --scan "Bfeed_scan.xlsx" --out "02_extract"
 
 # 3. primary Cox model (add --fast for model-based SEs while testing)
-python analysis\05_cox_retrospective_surveys.py --data ".\02_extract\combined_breastfeeding_data.csv"
+python analysis\05_cox_retrospective_surveys.py --data ".\02_extract\combined_breastfeeding_data.csv" ^
+       --out "05_cox_model"
 
 # 4. curves, figures and comparative outputs
 python 03_survival_analysis.py --data ".\02_extract\combined_breastfeeding_data.csv" ^
-       --out "03_survival" --cox-results ".\r26_cox_exact\cox_exact_results.xlsx"
+       --out "03_survival" --cox-results ".\05_cox_model\cox_exact_results.xlsx"
 python 04_comparative_analysis.py --data ".\02_extract\combined_breastfeeding_data.csv" --out "04_comparative"
 
 # 5. supporting estimates
-python analysis\07_turnbull_descriptive_summaries.py --data ".\02_extract\combined_breastfeeding_data.csv"
-python analysis\08_pooled_and_residence_estimates.py --data ".\02_extract\combined_breastfeeding_data.csv"
-python analysis\06_cox_sensitivity_checks.py --data ".\02_extract\combined_breastfeeding_data.csv"
+python analysis\07_turnbull_descriptive_summaries.py --data ".\02_extract\combined_breastfeeding_data.csv" ^
+       --out "07_turnbull"
+python analysis\08_pooled_and_residence_estimates.py --data ".\02_extract\combined_breastfeeding_data.csv" ^
+       --out "08_key_estimates"
+python analysis\06_cox_sensitivity_checks.py --data ".\02_extract\combined_breastfeeding_data.csv" ^
+       --out "06_sensitivities"
 ```
 
 ## Key variables
@@ -136,8 +142,8 @@ pyreadstat>=1.2.0
 
 ```
 Behnamian, S., & Fogh, F. Wealth, education and urbanization as predictors of
-early weaning in a multi-country survival analysis of 96 low- and middle-income
-countries.
+early cessation of any breastfeeding in a multi-country survival analysis of
+96 low- and middle-income countries.
 
 GitHub repository: https://github.com/sarabehnamian/early-weaning-analysis
 ```
@@ -151,10 +157,12 @@ Funded by USAID. Rockville, Maryland: ICF [Distributor].
 
 ## Contact
 
-**Sara Behnamian** — Globe Institute, University of Copenhagen
-<sara.behnamian@sund.ku.dk>
+**Sara Behnamian** — Department of Biology, Lund University, Sweden; Section for
+GeoGenetics, Globe Institute, University of Copenhagen, Denmark
+<sara.behnamian@biol.lu.se> · <sara.behnamian@sund.ku.dk>
 
-**Fatemeh Fogh** — Department of Mathematical Sciences, Florida Atlantic University
+**Fatemeh Fogh** — Department of Electrical Engineering and Computer Science,
+Florida Atlantic University, USA
 <ffogh2021@fau.edu>
 
 ## License
