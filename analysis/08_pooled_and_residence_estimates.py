@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-r27_key_numbers.py
+08_pooled_and_residence_estimates.py
 The few descriptive numbers the manuscript quotes that neither 03 nor 04 writes
 to a file: the pooled median duration of any breastfeeding, and the median and
 continuation probabilities for rural and urban children.
@@ -13,7 +13,7 @@ It also re-prints the pooled cessation percentages and the censoring mix, so the
 Methods, Results and Figure 1 can be checked against one output.
 
 Usage (from D:\\DiscoverPublicHealth\\early-weaning-analysis):
-    python r27_key_numbers.py --data ".\\02_extract_v23\\combined_breastfeeding_data.csv"
+    python analysis/08_pooled_and_residence_estimates.py --data ".\\02_extract_v23\\combined_breastfeeding_data.csv"
 
 Runtime: a few minutes. Outputs r27_key_numbers\\r27_key_numbers.txt
 """
@@ -66,8 +66,14 @@ def main(a):
     df = df[df["weight"] > 0]
     log(f"  zero weights excluded:     {n_zero:,}; weighted sample {len(df):,}")
 
+    rows = [("sample", "children_with_country", len(df) + n_zero),
+            ("sample", "zero_weight_children", n_zero),
+            ("sample", "weighted_children", len(df))]
+
     log()
     est, med, s6, s12, s24 = fit(df)
+    rows += [("pooled", "estimator", est), ("pooled", "median", med), ("pooled", "S6", s6),
+             ("pooled", "S12", s12), ("pooled", "S24", s24)]
     log(f"POOLED ({est})")
     log(f"  median duration of any breastfeeding: {med:.0f} months")
     log(f"  still breastfeeding at  6 months:     {100*s6:.1f}%   (ceased {100*(1-s6):.1f}%)")
@@ -80,12 +86,18 @@ def main(a):
         for val, name in [(0, "Rural"), (1, "Urban")]:
             d = df[df["urban"] == val]
             est, med, s6, s12, s24 = fit(d)
+            rows += [(name.lower(), "n", len(d)), (name.lower(), "estimator", est),
+                     (name.lower(), "median", med), (name.lower(), "S6", s6),
+                     (name.lower(), "S12", s12), (name.lower(), "S24", s24)]
             log(f"  {name}: n = {len(d):,} ({est})")
             log(f"    median {med:.0f} months; still breastfeeding at 6/12/24 months: "
                 f"{100*s6:.1f}% / {100*s12:.1f}% / {100*s24:.1f}%")
         log(f"  children with missing residence: {int(df['urban'].isna().sum()):,}")
 
     (out / "r27_key_numbers.txt").write_text("\n".join(lines), encoding="utf-8")
+    # full-precision values for downstream key-number tables (11_key_numbers.py)
+    pd.DataFrame(rows, columns=["group", "quantity", "value"]).to_excel(
+        out / "r27_key_numbers.xlsx", index=False)
     print(f"\nDone. Written to {out.resolve()}")
 
 

@@ -59,3 +59,8 @@ Thumbs.db
 
 # superseded working scripts
 old/
+
+# v25 figure, extras and submission folders (outputs and manuscript files)
+figures_v25/
+v25_extras/
+submission/

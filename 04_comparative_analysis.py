@@ -46,17 +46,15 @@ plt.rcParams.update({
 REGIONS = {
     # Identical to 03_survival_analysis.py so that regional Ns agree across all figures (R3.9)
     'West Africa': ['BF', 'BJ', 'CI', 'GH', 'GM', 'GN', 'LB', 'ML', 'NI', 'NG', 'SL', 'SN', 'TG', 'MR'],
-    'East Africa': ['BI', 'BU', 'ER', 'ET', 'KE', 'KM', 'MW', 'RW', 'TZ', 'UG', 'ZM', 'ZW', 'MZ', 'LS', 'MG'],
+    'East Africa': ['BI', 'BU', 'ER', 'ET', 'KE', 'KM', 'MW', 'RW', 'TZ', 'UG', 'ZM', 'ZW', 'MZ', 'LS', 'MD'],
     'Central Africa': ['AO', 'CD', 'CG', 'CM', 'GA', 'ST', 'TD', 'CF'],
     'North Africa': ['EG', 'MA', 'TN'],
     'Southern Africa': ['ZA', 'SZ', 'NM'],
-    'South Asia': ['AF', 'BD', 'IA', 'IN', 'LK', 'MV', 'NP', 'PK',
-                   'AP', 'AS', 'BH', 'DL', 'GJ', 'GO', 'HP', 'HR', 'KA',
-                   'MB', 'MH', 'MN', 'MP', 'OR', 'PJ', 'RJ', 'SK', 'UP', 'WB'],
+    'South Asia': ['AF', 'BD', 'IA', 'IN', 'LK', 'MV', 'NP', 'PK'],
     'Southeast Asia': ['ID', 'KH', 'LA', 'MM', 'PH', 'TH', 'TL', 'VN', 'PG'],
     'Latin America & Caribbean': ['BO', 'BR', 'CO', 'DR', 'EC', 'GT', 'GU', 'HN', 'HT',
-                                  'MX', 'NC', 'PE', 'PY', 'AR', 'GY', 'JM'],
-    'Europe/Central Asia': ['AL', 'AM', 'AZ', 'KK', 'KY', 'MD', 'TJ', 'TR', 'UA', 'UZ'],
+                                  'MX', 'NC', 'PE', 'PY', 'GY'],
+    'Europe/Central Asia': ['AL', 'AM', 'AZ', 'KK', 'KY', 'MB', 'TJ', 'TR', 'UA', 'UZ'],
     'Middle East': ['JO', 'YE'],
 }
 
@@ -71,7 +69,7 @@ COUNTRY_NAMES = {
     'EG': 'Egypt', 'MA': 'Morocco', 'JO': 'Jordan', 'AM': 'Armenia', 'AZ': 'Azerbaijan',
     'BJ': 'Benin', 'CI': "Côte d'Ivoire", 'GM': 'Gambia', 'GN': 'Guinea', 'LB': 'Liberia',
     'NE': 'Niger', 'SL': 'Sierra Leone', 'TG': 'Togo', 'MR': 'Mauritania',
-    'BI': 'Burundi', 'BU': 'Burundi', 'ER': 'Eritrea', 'KM': 'Comoros', 'MG': 'Madagascar',
+    'BI': 'Burundi', 'BU': 'Burundi', 'ER': 'Eritrea', 'KM': 'Comoros', 'MD': 'Madagascar',
     'AO': 'Angola', 'CD': 'DR Congo', 'CG': 'Congo', 'CM': 'Cameroon', 'GA': 'Gabon',
     'ST': 'São Tomé', 'TD': 'Chad', 'CF': 'Central African Rep',
     'ZA': 'South Africa', 'SZ': 'Eswatini', 'NM': 'Namibia',
@@ -79,16 +77,10 @@ COUNTRY_NAMES = {
     'LA': 'Laos', 'TH': 'Thailand', 'TL': 'Timor-Leste', 'PG': 'Papua New Guinea',
     'BR': 'Brazil', 'CO': 'Colombia', 'DR': 'Dominican Rep', 'EC': 'Ecuador',
     'MX': 'Mexico', 'NC': 'Nicaragua', 'NI': 'Niger', 'GU': 'Guatemala', 'PY': 'Paraguay',
-    'AR': 'Argentina', 'GY': 'Guyana', 'JM': 'Jamaica',
-    'AL': 'Albania', 'KK': 'Kazakhstan', 'KY': 'Kyrgyzstan', 'MD': 'Moldova',
+    'GY': 'Guyana',
+    'AL': 'Albania', 'KK': 'Kazakhstan', 'KY': 'Kyrgyzstan', 'MB': 'Moldova',
     'TJ': 'Tajikistan', 'TR': 'Turkey', 'UA': 'Ukraine', 'UZ': 'Uzbekistan',
     'YE': 'Yemen', 'TN': 'Tunisia',
-    # Indian state-level DHS files (NFHS)
-    'AP': 'Andhra Pradesh, India', 'AS': 'Assam, India', 'BH': 'Bihar, India', 'DL': 'Delhi, India',
-    'GJ': 'Gujarat, India', 'GO': 'Goa, India', 'HP': 'Himachal Pradesh, India', 'HR': 'Haryana, India',
-    'KA': 'Karnataka, India', 'MB': 'Meghalaya, India', 'MH': 'Maharashtra, India', 'MN': 'Manipur, India',
-    'MP': 'Madhya Pradesh, India', 'OR': 'Odisha, India', 'PJ': 'Punjab, India', 'RJ': 'Rajasthan, India',
-    'SK': 'Sikkim, India', 'UP': 'Uttar Pradesh, India', 'WB': 'West Bengal, India'
 }
 
 # -------------------- Helper Functions --------------------
@@ -817,6 +809,9 @@ def main(data_file: str, output_dir: str):
         logger.warning("No censor_type column: this looks like an extraction from before v2.3, "
                        "in which children coded m4 = 93 were dropped")
     logger.info(f"Loaded {len(data):,} observations from {data['country'].nunique()} countries")
+    unassigned = sorted(c for c in data['country'].unique() if assign_region(c) == 'Other')
+    if unassigned:
+        logger.warning(f"Country codes with no region (assigned 'Other'): {', '.join(unassigned)}")
     
     # Clean data - remove any rows with null countries
     data = data[data['country'].notna()]

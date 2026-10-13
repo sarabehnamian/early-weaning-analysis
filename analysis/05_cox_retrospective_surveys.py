@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-r26_cox_exact.py
+05_cox_retrospective_surveys.py
 Fits the primary Cox model on the v2.3 extraction.
 
 Proportional-hazards regression cannot use left-censored observations, so the
@@ -13,9 +13,9 @@ Reports the analytic sample, the hazard ratios with standard errors clustered on
 the survey-specific PSU, and the proportional-hazards test.
 
 Usage (from D:\\DiscoverPublicHealth\\early-weaning-analysis):
-    python r26_cox_exact.py --fast     # model-based SEs, minutes: use to check the sample first
-    python r26_cox_exact.py            # PSU-clustered SEs, slow (hours): the reportable fit
-    python r26_cox_exact.py --no-wealth --fast   # residence + education only, all surveys with
+    python analysis/05_cox_retrospective_surveys.py --fast     # model-based SEs, minutes: use to check the sample first
+    python analysis/05_cox_retrospective_surveys.py            # PSU-clustered SEs, slow (hours): the reportable fit
+    python analysis/05_cox_retrospective_surveys.py --no-wealth --fast   # residence + education only, all surveys with
                                                  # retrospective durations (no wealth index needed)
 
 Outputs (folder r26_cox_exact):

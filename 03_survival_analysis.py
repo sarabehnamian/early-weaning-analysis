@@ -44,7 +44,7 @@ REGIONS = {
                     'MR'],  # Added MR (Mauritania)
 
     'East Africa': ['BI', 'BU', 'ER', 'ET', 'KE', 'KM', 'MW', 'RW', 'TZ', 'UG', 'ZM', 'ZW', 'MZ', 'LS',
-                    'MG'],  # Added MG (Madagascar)
+                    'MD'],  # MD = Madagascar (DHS code)
 
     'Central Africa': ['AO', 'CD', 'CG', 'CM', 'GA', 'ST', 'TD', 'CF'],
 
@@ -52,19 +52,17 @@ REGIONS = {
 
     'Southern Africa': ['ZA', 'SZ', 'NM'],  # South Africa, Eswatini, Namibia
 
-    'South Asia': ['AF', 'BD', 'IA', 'IN', 'LK', 'MV', 'NP', 'PK',
-                   # Indian states (subnational DHS data):
-                   'AP', 'AS', 'BH', 'DL', 'GJ', 'GO', 'HP', 'HR', 'KA',
-                   'MB', 'MH', 'MN', 'MP', 'OR', 'PJ', 'RJ', 'SK', 'UP', 'WB'],
+    # NFHS-2 Indian state files are excluded in 02 (country now comes from v000)
+    'South Asia': ['AF', 'BD', 'IA', 'IN', 'LK', 'MV', 'NP', 'PK'],
 
     'Southeast Asia': ['ID', 'KH', 'LA', 'MM', 'PH', 'TH', 'TL', 'VN',
                        'PG'],  # Added PG (Papua New Guinea)
 
     'Latin America & Caribbean': ['BO', 'BR', 'CO', 'DR', 'EC', 'GT', 'GU', 'HN', 'HT',
                                   'MX', 'NC', 'PE', 'PY',
-                                  'AR', 'GY', 'JM'],  # Added Argentina, Guyana, Jamaica
+                                  'GY'],  # Guyana
 
-    'Europe/Central Asia': ['AL', 'AM', 'AZ', 'KK', 'KY', 'MD', 'TJ', 'TR', 'UA', 'UZ'],
+    'Europe/Central Asia': ['AL', 'AM', 'AZ', 'KK', 'KY', 'MB', 'TJ', 'TR', 'UA', 'UZ'],  # MB = Moldova
 
     'Middle East': ['JO', 'YE'],  # Jordan, Yemen
 }
@@ -173,8 +171,10 @@ def kaplan_meier_by_group(data: pd.DataFrame, group_var: str, output_dir: Path,
     ax.set_xlim(0, 36)
     ax.grid(True, alpha=0.25)
 
-    # 6-month reference line (R2.13: this is the WHO exclusive-breastfeeding recommendation, not a minimum duration of any breastfeeding)
-    ax.axvline(x=6, color='#CC3344', linestyle='--', alpha=0.6, label='6 months (WHO exclusive\nbreastfeeding recommendation)')
+    # 24-month reference line: WHO recommends continued breastfeeding up to two years or beyond.
+    # No 6-month line: that is the exclusive-breastfeeding recommendation, which these curves of
+    # any breastfeeding do not measure (R2.13).
+    ax.axvline(x=24, color='#CC3344', linestyle='--', alpha=0.6, label='24 months (WHO: continue\nbreastfeeding to 2 years)')
 
     # lean legend outside
     leg = ax.legend(bbox_to_anchor=(1.02, 1), loc='upper left', frameon=False, fontsize=10, borderaxespad=0.)
@@ -607,6 +607,9 @@ def main(data_file: str, output_dir: str, skip_cox: bool = False, cox_results: s
     logger.info(f"Loading data from {data_file}")
     data = pd.read_csv(data_file, low_memory=False)
     logger.info(f"Loaded {len(data):,} observations from {data['country'].nunique()} countries")
+    unassigned = sorted(c for c in data['country'].unique() if assign_region(c) == 'Other')
+    if unassigned:
+        logger.warning(f"Country codes with no region (assigned 'Other'): {', '.join(unassigned)}")
 
     # Clean data - remove any rows with null countries
     data = data[data['country'].notna()]
@@ -763,7 +766,7 @@ if __name__ == "__main__":
                        default="./03_survival_analysis",
                        help="Output directory for results")
     parser.add_argument("--cox-results", default=None,
-                        help="path to cox results from r26_cox_exact.py; draws the forest plot "
+                        help="path to cox results from analysis/05_cox_retrospective_surveys.py; draws the forest plot "
                              "from that fit instead of refitting here")
     parser.add_argument("--skip-cox", action="store_true",
                        help="Do not refit the Cox model; redraw the forest plot from the saved results file")

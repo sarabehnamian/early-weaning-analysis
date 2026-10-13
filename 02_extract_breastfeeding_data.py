@@ -1,5 +1,5 @@
 # 02_extract_breastfeeding_data.py
-# python 02_extract_breastfeeding_data.py ".\ZIPS" --scan ".\Bfeed_scan.xlsx" --out ".\02_extract_breastfeeding_data"
+# python 02_extract_breastfeeding_data.py ".\data" --scan ".\Bfeed_scan.xlsx" --out ".\02_extract_v25"
 
 # Extracts breastfeeding survival data from all "ready" KR datasets identified in scan
 # Creates individual country files and a combined dataset for survival analysis
@@ -20,7 +20,20 @@ warnings.filterwarnings('ignore')
 REQUIRED_VARS = ['m4', 'b19', 'v008', 'b3', 'b5', 'v005', 'v021', 'v024', 'v025']
 OPTIONAL_VARS = ['m5', 'v022', 'v023', 'v012', 'v106', 'v190', 'b4', 'v102',
                  'v201', 'v404', 'v501', 'm14', 'm15', 'm17', 'm19', 'h10', 'v007']
-EXTRACT_VARS = REQUIRED_VARS + OPTIONAL_VARS
+EXTRACT_VARS = ['v000'] + REQUIRED_VARS + OPTIONAL_VARS
+
+# NFHS-2 (India 1998-99) state files carry v000 = IA3 but a state code as the zip
+# prefix (KE = Kerala, MZ = Mizoram, TN = Tamil Nadu, TR = Tripura, MG = Meghalaya, ...).
+# Map each prefix to its v024 code in the national IAKR42 file for the overlap check.
+INDIA_STATE_V024 = {
+    'AP': 2, 'AS': 3, 'BH': 4, 'GO': 5, 'GJ': 6, 'HR': 7, 'HP': 8, 'JM': 9, 'KA': 10,
+    'KE': 11, 'MP': 12, 'MH': 13, 'MN': 14, 'MG': 15, 'MZ': 16, 'NA': 17, 'OR': 18,
+    'PJ': 19, 'RJ': 20, 'SK': 21, 'TN': 22, 'WB': 23, 'UP': 24, 'DL': 30, 'AR': 34, 'TR': 35,
+}
+
+# Dominican Republic special surveys of the bateyes (sugar-cane settlements), 2007 and
+# 2013: rural-only samples of a few provinces, not national. Excluded like the state files.
+DR_SPECIAL_ZIPS = {'DRKR5ADT.ZIP', 'DRKR6ADT.ZIP'}
 
 # -------------------- Helper Functions --------------------
 
@@ -44,8 +57,28 @@ def read_scan_results(scan_file: Path) -> pd.DataFrame:
     return ready
 
 def extract_country_code(zip_name: str) -> str:
-    """Extract country code from zip filename (first 2 letters)."""
+    """Zip-name prefix (first 2 letters). This is the file code, NOT always the country:
+    the NFHS-2 Indian state files use a state code here. The country comes from v000."""
     return zip_name[:2].upper()
+
+def convert_survey_year(v007, country: str):
+    """Convert raw v007 to a 4-digit Gregorian year.
+    2-digit years: 90-99 -> 1990s, 0-30 -> 2000s. Nepal (Bikram Sambat) > 2050 -> -57;
+    Nepal 1996 (NPKR31) stores v007 = 52, i.e. BS 2052. Ethiopia (Ethiopian calendar) -> +8."""
+    if v007 is None or pd.isna(v007):
+        return np.nan
+    y = int(v007)
+    if country == 'NP' and 50 <= y <= 89:
+        y += 2000
+    elif 90 <= y <= 99:
+        y += 1900
+    elif 0 <= y <= 30:
+        y += 2000
+    if country == 'NP' and y > 2050:
+        y -= 57
+    if country == 'ET':
+        y += 8
+    return y
 
 def extract_survey_year(zip_name: str, df_data: pd.DataFrame = None) -> int:
     """Extract survey year from zip filename or data."""
@@ -81,11 +114,13 @@ def read_dta_from_zip(zip_path: Path, member: str, columns=None, nrows=None) -> 
         try:
             # Try pyreadstat first (faster for large files)
             import pyreadstat
-            df, meta = pyreadstat.read_dta(
-                str(temp_path),
-                usecols=columns if columns else None,
-                row_limit=nrows if nrows else None
-            )
+            kw = dict(usecols=columns if columns else None,
+                      row_limit=nrows if nrows else None)
+            try:
+                df, meta = pyreadstat.read_dta(str(temp_path), **kw)
+            except Exception:
+                # some old DHS files (e.g. GAKR41, TRKR41) are not UTF-8
+                df, meta = pyreadstat.read_dta(str(temp_path), encoding="latin1", **kw)
             return df
         except:
             # Fallback to pandas
@@ -100,11 +135,11 @@ def read_dta_from_zip(zip_path: Path, member: str, columns=None, nrows=None) -> 
             except Exception as e:
                 raise Exception(f"Failed to read {member}: {e}")
 
-def process_kr_file(zip_path: Path, dta_name: str, country_code: str,
+def process_kr_file(zip_path: Path, dta_name: str, file_code: str,
                     survey_year: int, logger) -> pd.DataFrame:
     """Process a single KR file and extract breastfeeding data."""
 
-    logger.info(f"Processing {country_code} - {dta_name}")
+    logger.info(f"Processing {file_code} - {dta_name}")
 
     # Determine which variables are actually available
     try:
@@ -122,15 +157,28 @@ def process_kr_file(zip_path: Path, dta_name: str, country_code: str,
         logger.error(f"Failed to read {dta_name}: {e}")
         return pd.DataFrame()
 
+    # Country = first two letters of v000 (the DHS country code the data carries),
+    # not the zip prefix, which for the NFHS-2 state files is an Indian state code.
+    if 'v000' in df.columns and df['v000'].notna().any():
+        v000 = str(df['v000'].mode().iloc[0]).strip()
+        country_code = v000[:2].upper()
+    else:
+        v000 = ''
+        country_code = file_code
+        logger.warning(f"{file_code}: no v000, using zip prefix as country")
+    df = df.drop(columns=['v000'], errors='ignore')
+
     # Convert to numeric
     for col in df.columns:
         df[col] = pd.to_numeric(df[col], errors='coerce')
 
-    # Get better survey year if v007 available
+    # Survey year from v007 (raw kept as v007_raw), converted to a 4-digit Gregorian year
+    v007_raw = np.nan
     if 'v007' in df.columns:
         year_from_data = df['v007'].mode()
         if len(year_from_data) > 0 and not np.isnan(year_from_data.iloc[0]):
-            survey_year = int(year_from_data.iloc[0])
+            v007_raw = int(year_from_data.iloc[0])
+            survey_year = convert_survey_year(v007_raw, country_code)
 
     # Calculate age in months
     if 'b19' in df.columns:
@@ -155,7 +203,11 @@ def process_kr_file(zip_path: Path, dta_name: str, country_code: str,
 
     # Create survival analysis variables
     df_eligible['country'] = country_code
+    df_eligible['file_code'] = file_code
+    df_eligible['source_zip'] = zip_path.name
+    df_eligible['v000'] = v000
     df_eligible['survey_year'] = survey_year
+    df_eligible['v007_raw'] = v007_raw
 
     # PROPER HANDLING OF M4 CODES (DHS STANDARD - CORRECTED)
     # Valid durations: 0-93 months (actual reported duration)
@@ -231,7 +283,8 @@ def process_kr_file(zip_path: Path, dta_name: str, country_code: str,
     df_final['never_breastfed'] = (df_final['m4'] == 94).astype(int)
 
     # Keep only necessary columns for final dataset
-    keep_cols = ['country', 'survey_year', 'duration_months', 'event', 'age_months',
+    keep_cols = ['country', 'file_code', 'source_zip', 'v000', 'survey_year', 'v007_raw',
+                 'duration_months', 'event', 'age_months',
                  'censor_type', 't_lower', 't_upper', 'm4', 'never_breastfed',
                  'v005', 'v021']  # weights, PSU, censoring type and the raw m4 code
 
@@ -262,7 +315,8 @@ def process_kr_file(zip_path: Path, dta_name: str, country_code: str,
         logger.warning(f"  {country_code}: no retrospective durations in this survey "
                        f"(current-status data only)")
 
-    logger.info(f"  Extracted {len(df_output)} children from {country_code}")
+    logger.info(f"  Extracted {len(df_output)} children from {file_code} (v000 {v000}, "
+                f"country {country_code}, v007 {v007_raw} -> {survey_year})")
 
     return df_output
 
@@ -411,6 +465,44 @@ def create_summary_statistics(all_data: pd.DataFrame, output_dir: Path):
 
     return summary_df
 
+def check_india_state_overlap(state_df: pd.DataFrame, rest_df: pd.DataFrame,
+                              output_dir: Path, logger):
+    """Compare children per NFHS-2 state file with the same state (v024) in IAKR42."""
+    nat = rest_df[rest_df['source_zip'].str.upper().str.startswith('IAKR42')]
+    nat_counts = nat['v024'].value_counts()
+    # Compare the records themselves too, not just the counts. v005 is left out:
+    # the state files carry state-level weights, so it differs by design.
+    cols = [c for c in ['m4', 'b4', 'age_months', 'v021', 'v025']
+            if c in state_df.columns]
+    rows = []
+    for (code, zname), g in state_df.groupby(['file_code', 'source_zip']):
+        v024 = INDIA_STATE_V024.get(code)
+        n_nat = int(nat_counts.get(v024, 0)) if v024 is not None else None
+        same = None
+        if n_nat:
+            a = g[cols].fillna(-1).sort_values(cols).reset_index(drop=True)
+            b = (nat.loc[nat['v024'] == v024, cols].fillna(-1)
+                 .sort_values(cols).reset_index(drop=True))
+            same = bool(len(a) == len(b) and np.allclose(a.values, b.values))
+        rows.append({'file_code': code, 'source_zip': zname, 'iakr42_v024': v024,
+                     'n_state_file': len(g), 'n_iakr42_same_state': n_nat,
+                     'difference': len(g) - n_nat if n_nat is not None else None,
+                     'identical_records': same,
+                     'weights_differ': bool(not np.allclose(
+                         np.sort(g['v005'].values),
+                         np.sort(nat.loc[nat['v024'] == v024, 'v005'].values)))
+                         if n_nat and n_nat == len(g) else None})
+    tbl = pd.DataFrame(rows)
+    tbl.to_csv(output_dir / 'india_state_overlap_check.csv', index=False)
+    logger.info("\nNFHS-2 state files vs IAKR42 by state (v024):\n" + tbl.to_string(index=False))
+    if len(tbl):
+        logger.info(f"State files total {tbl['n_state_file'].sum():,} children; IAKR42 has "
+                    f"{int(tbl['n_iakr42_same_state'].fillna(0).sum()):,} in the same states; "
+                    f"{int(tbl['identical_records'].fillna(False).sum())} of {len(tbl)} "
+                    f"state files are record-for-record identical to their IAKR42 state "
+                    f"(m4, b4, age, PSU, urban; v005 weights compared separately)")
+    return tbl
+
 # -------------------- Main Function --------------------
 
 def main(zip_dir: str, scan_file: str, output_dir: str):
@@ -429,7 +521,7 @@ def main(zip_dir: str, scan_file: str, output_dir: str):
     # Setup logging
     logger = setup_logging(output_dir)
     logger.info("=" * 60)
-    logger.info("BREASTFEEDING DATA EXTRACTION (v2.4 - keeps m4 and a never_breastfed flag)")
+    logger.info("BREASTFEEDING DATA EXTRACTION (v2.5 - country from v000, NFHS-2 state files and DR batey surveys excluded, 4-digit years)")
     logger.info(f"Started at: {datetime.now()}")
     logger.info("=" * 60)
 
@@ -461,18 +553,20 @@ def main(zip_dir: str, scan_file: str, output_dir: str):
             continue
         seen_dta[key] = zip_name
 
-        country_code = extract_country_code(zip_name)
+        file_code = extract_country_code(zip_name)
         survey_year = extract_survey_year(zip_name)  # Will be refined from data if v007 available
 
         try:
             # Process the KR file
-            df_country = process_kr_file(zip_path, dta_name, country_code,
+            df_country = process_kr_file(zip_path, dta_name, file_code,
                                         survey_year, logger)
 
             if not df_country.empty:
                 # Save individual country file
                 actual_year = df_country['survey_year'].iloc[0]
-                country_file = country_dir / f"{country_code}_{actual_year}_breastfeeding.csv"
+                # zip stem in the name: two surveys of one country can share a year
+                country_file = (country_dir /
+                                f"{file_code}_{actual_year}_{Path(zip_name).stem}_breastfeeding.csv")
                 df_country.to_csv(country_file, index=False)
 
                 # Add to combined dataset
@@ -486,6 +580,37 @@ def main(zip_dir: str, scan_file: str, output_dir: str):
     if all_data:
         logger.info("\nCombining all country data...")
         combined_df = pd.concat(all_data, ignore_index=True)
+
+        # Survey-year conversion table (one row per dataset) for checking
+        year_tbl = (combined_df.groupby(['country', 'file_code', 'source_zip'], dropna=False)
+                    [['v007_raw', 'survey_year']].first().reset_index()
+                    .sort_values(['country', 'survey_year', 'source_zip']))
+        year_tbl.to_csv(output_dir / 'survey_year_conversion.csv', index=False)
+        logger.info("\nSurvey year conversion (country / file / raw v007 -> converted):\n"
+                    + year_tbl.to_string(index=False))
+        odd = year_tbl[(year_tbl['survey_year'] < 1985) | (year_tbl['survey_year'] > 2026)]
+        if len(odd):
+            logger.warning("Survey years outside 1985-2026:\n" + odd.to_string(index=False))
+
+        # NFHS-2 Indian state files: v000 says India but the zip prefix is a state code.
+        # They are subsets of the national IAKR42 survey, so exclude them.
+        is_state = combined_df['country'].eq('IA') & combined_df['file_code'].ne('IA')
+        state_df = combined_df[is_state]
+        check_india_state_overlap(state_df, combined_df[~is_state], output_dir, logger)
+        state_df.to_csv(output_dir / 'india_state_files_excluded.csv', index=False)
+        logger.info(f"EXCLUDED {int(is_state.sum()):,} children from "
+                    f"{state_df['source_zip'].nunique()} NFHS-2 Indian state files "
+                    f"(written to india_state_files_excluded.csv)")
+        combined_df = combined_df[~is_state].reset_index(drop=True)
+
+        is_dr_special = combined_df['source_zip'].str.upper().isin(DR_SPECIAL_ZIPS)
+        dr_df = combined_df[is_dr_special]
+        dr_df.to_csv(output_dir / 'dr_special_surveys_excluded.csv', index=False)
+        logger.info(f"EXCLUDED {int(is_dr_special.sum()):,} children from "
+                    f"{dr_df['source_zip'].nunique()} Dominican Republic batey special surveys "
+                    f"({', '.join(sorted(dr_df['source_zip'].unique()))}; written to "
+                    f"dr_special_surveys_excluded.csv)")
+        combined_df = combined_df[~is_dr_special].reset_index(drop=True)
 
         # Save combined dataset
         logger.info(f"Saving combined dataset with {len(combined_df)} children...")

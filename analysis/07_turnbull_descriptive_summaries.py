@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-r25_turnbull_summaries.py
+07_turnbull_descriptive_summaries.py
 Descriptive survival results for the v2.3 extraction, which contains three kinds
 of observation:
 
@@ -20,7 +20,7 @@ analysis effectively did. Surveys with no retrospective durations at all are
 listed separately: for those, only the Turnbull column is meaningful.
 
 Usage (from D:\\DiscoverPublicHealth\\early-weaning-analysis):
-    python r25_turnbull_summaries.py --data ".\\02_extract_v23\\combined_breastfeeding_data.csv"
+    python analysis/07_turnbull_descriptive_summaries.py --data ".\\02_extract_v23\\combined_breastfeeding_data.csv"
 
 Outputs (folder r25_turnbull):
     turnbull_summaries.xlsx   sheets: overall, by_region, by_residence, by_country,

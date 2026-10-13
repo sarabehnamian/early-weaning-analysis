@@ -2,7 +2,7 @@ r"""
 r28_sensitivities_v23.py
 Re-runs the three sensitivity analyses quoted in the manuscript and in the replies
 to R1.1, R1.2/R2.9 and R1.3, on the v2.3 extraction and on the same sample as the
-primary Cox model (r26_cox_exact.py): surveys that recorded retrospective
+primary Cox model (05_cox_retrospective_surveys.py): surveys that recorded retrospective
 durations, children with residence, wealth quintile, maternal education and a PSU
 identifier, and a positive survey weight. Left-censored children (m4 = 93) cannot
 enter a proportional-hazards model and are excluded here; they are retained in the
@@ -66,7 +66,6 @@ def prepare(data_file, log):
         src = "duration 0 & event (no m4 in file — includes cessation within month 0)"
     log(f"Never-breastfed flag from:          {src}")
 
-    # same analytic sample as the primary PSU-clustered model (r19): covariates AND v021 observed
     # same analytic sample as the primary Cox model: surveys with retrospective
     # durations, then complete covariates and a PSU identifier
     sv = df.groupby(["country", "survey_year"]).apply(
