@@ -36,7 +36,7 @@ early-weaning-analysis/
 │   ├── 15_bootstrap_ci.py                    # PSU cluster-bootstrap CIs for medians and S(t)
 │   ├── 16_svycoxph_india.py / .R             # lifelines vs R survey::svycoxph, India NFHS-5
 │   ├── 17_ever_breastfed_logistic.py         # weighted logistic model of ever breastfeeding
-│   ├── 18_km_figures.py                      # redraws Figures 4-6 (24-month reference line only)
+│   ├── 18_km_figures.py                      # redraws Figures 5-7 (24-month reference line only)
 │   ├── 19_cox_exclusions_table.py            # Table S8: surveys excluded from the Cox model
 │   └── cox_common.py                         # Cox sample and model shared by 13, 14, 16, 17, 19
 ├── diagnostics/                        # one-off checks kept for the record

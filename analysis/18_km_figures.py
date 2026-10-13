@@ -1,5 +1,5 @@
 # 18_km_figures.py
-# Redraws the survival curves by country, region and residence (Figures 4-6) with the
+# Redraws the survival curves by country, region and residence (Figures 5-7) with the
 # 24-month reference line only; the 6-month line is dropped (see 03 kaplan_meier_by_group).
 # Uses the plotting function from 03 unchanged, so curves match a full 03 run.
 #
