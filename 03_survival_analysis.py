@@ -136,7 +136,9 @@ def kaplan_meier_by_group(data: pd.DataFrame, group_var: str, output_dir: Path,
         # them, so where they occur we fit the Turnbull NPMLE from the interval
         # bounds [t_lower, t_upper] instead.
         n_left = int((g['censor_type'] == 'left').sum()) if 'censor_type' in g.columns else 0
-        if n_left > 0 and {'t_lower', 't_upper'}.issubset(g.columns):
+        # Round 3: one estimator for every group (Turnbull; equals Kaplan-Meier without left-censoring,
+        # but lifelines reports its S(t) as P(duration >= t), so mixing the two shifted S(t) by a month)
+        if {'t_lower', 't_upper'}.issubset(g.columns):
             lo = pd.to_numeric(g['t_lower'], errors='coerce').to_numpy(dtype=float)
             up = pd.to_numeric(g['t_upper'], errors='coerce').to_numpy(dtype=float)
             up = np.where(np.isnan(up), np.inf, up)
@@ -346,7 +348,9 @@ def _survival_at(g: pd.DataFrame, t: float):
     w = g['weight'].to_numpy(dtype=float) if 'weight' in g.columns else None
     n_left = int((g['censor_type'] == 'left').sum()) if 'censor_type' in g.columns else 0
     try:
-        if n_left > 0 and {'t_lower', 't_upper'}.issubset(g.columns):
+        # Round 3: one estimator for every group (Turnbull; equals Kaplan-Meier without left-censoring,
+        # but lifelines reports its S(t) as P(duration >= t), so mixing the two shifted S(t) by a month)
+        if {'t_lower', 't_upper'}.issubset(g.columns):
             lo = pd.to_numeric(g['t_lower'], errors='coerce').to_numpy(dtype=float)
             up = pd.to_numeric(g['t_upper'], errors='coerce').to_numpy(dtype=float)
             up = np.where(np.isnan(up), np.inf, up)

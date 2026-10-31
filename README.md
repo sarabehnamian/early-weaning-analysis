@@ -1,6 +1,6 @@
 # Early Weaning Analysis Pipeline
 
-Analysis code for *Wealth, education and urbanization as predictors of the
+Analysis code for *Associations of wealth, education and urbanization with the
 duration of any breastfeeding in a multi-country survival analysis of 74 low-
 and middle-income countries*, using DHS
 (Demographic and Health Survey) data. The pipeline estimates the duration of
@@ -38,6 +38,10 @@ early-weaning-analysis/
 │   ├── 17_ever_breastfed_logistic.py         # weighted logistic model of ever breastfeeding
 │   ├── 18_km_figures.py                      # redraws Figures 5-7 (24-month reference line only)
 │   ├── 19_cox_exclusions_table.py            # Table S8: surveys excluded from the Cox model
+│   ├── 20_round3_reviewer_checks.py          # third-round checks: survey weighting (Table S9),
+│   │                                         #   current-status datasets excluded (S10), selection
+│   │                                         #   into the Cox sample and current-status PH model (S11)
+│   ├── 21_svycoxph_full.py / .R              # design-based Cox model (PSUs + DHS strata), whole Cox sample
 │   └── cox_common.py                         # Cox sample and model shared by 13, 14, 16, 17, 19
 ├── diagnostics/                        # one-off checks kept for the record
 ├── .gitignore
@@ -88,10 +92,14 @@ and `t_upper`.
 ## Estimators
 
 - **Descriptive results** use the weighted **Turnbull** non-parametric maximum
-  likelihood estimator wherever left-censored children are present, and the
-  ordinary **Kaplan–Meier** estimator otherwise. Cessation before six months is
+  likelihood estimator for every country, region and subgroup. It reduces to
+  Kaplan–Meier when no child is left-censored, and using it everywhere keeps one
+  definition of S(t): the probability that the recorded duration is at least t
+  completed months. (lifelines' `KaplanMeierFitter.fit` reports P(duration > t)
+  instead; an earlier version mixed the two, which shifted S(t) by one month for
+  the 22 countries without left-censored children.) Cessation before six months is
   reported as 1 − S(6) from the same curve, not as a count of recorded durations
-  under six months.
+  under six months. No median is truncated.
 - **Cox proportional-hazards models** cannot use left-censored observations, so
   they are restricted to the surveys that recorded retrospective durations, with
   standard errors clustered on the survey PSU (`v021`) and stratification by
@@ -146,6 +154,8 @@ python analysis\16_svycoxph_india.py      # needs R with the survival and survey
 python analysis\17_ever_breastfed_logistic.py
 python analysis\18_km_figures.py
 python analysis\19_cox_exclusions_table.py
+python analysis\20_round3_reviewer_checks.py   # optional --parts FBE, --pop un_wpp_under5.csv
+python analysis\21_svycoxph_full.py            # needs R with the survival and survey packages
 ```
 
 Several of these fit Cox models on about one million children. Run them one at a
@@ -202,12 +212,12 @@ statsmodels>=0.14.0   # 17
 geopandas>=0.14.0     # 10
 ```
 
-Optional, for 16: R ≥ 4.3 with the `survival` and `survey` packages.
+Optional, for 16 and 21: R ≥ 4.3 with the `survival` and `survey` packages.
 
 ## Citation
 
 ```
-Behnamian, S., & Fogh, F. Wealth, education and urbanization as predictors of
+Behnamian, S., & Fogh, F. Associations of wealth, education and urbanization with
 the duration of any breastfeeding in a multi-country survival analysis of
 74 low- and middle-income countries.
 

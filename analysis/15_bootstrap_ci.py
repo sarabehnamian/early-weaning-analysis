@@ -100,7 +100,7 @@ def main(a):
     G = []
     for kind, name, idx in groups:
         n_left = int(left_all[idx].sum())
-        turnbull = n_left > 0
+        turnbull = True  # round 3: Turnbull for every group, as in 03/04
         if turnbull:
             key = pd.MultiIndex.from_arrays([lo_all[idx], up_all[idx]])
         else:

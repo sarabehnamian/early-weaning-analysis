@@ -130,7 +130,9 @@ def _fit_survival(data: pd.DataFrame):
     kmf = KaplanMeierFitter()
     n_left = int((d['censor_type'] == 'left').sum()) if 'censor_type' in d.columns else 0
     try:
-        if n_left > 0 and {'t_lower', 't_upper'}.issubset(d.columns):
+        # Round 3: one estimator for every group (Turnbull; equals Kaplan-Meier without left-censoring,
+        # but lifelines reports its S(t) as P(duration >= t), so mixing the two shifted S(t) by a month)
+        if {'t_lower', 't_upper'}.issubset(d.columns):
             lo = pd.to_numeric(d['t_lower'], errors='coerce').to_numpy(dtype=float)
             up = pd.to_numeric(d['t_upper'], errors='coerce').to_numpy(dtype=float)
             up = np.where(np.isnan(up), np.inf, up)
